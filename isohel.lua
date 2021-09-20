@@ -23,7 +23,7 @@ local screen_refresh_metro
 local MAX_NUM_VOICES = 16
 
 local options = {
-  same_note_behavior = {"retrigger", "detuned", "ignore"}
+  same_note_behavior = {"retrigger", "detuned", "ignore", "separate"}
 }
 
 local sources = {pressed = 1,
@@ -44,9 +44,10 @@ local metrolevel = 6
 local bpm = clock.get_tempo()
 local divnum = 1
 local divdenom = 1
-local k3 = false
+local k1 = false
 local altkey = false
 local file = _path.dust.."audio/metro-tick.wav"
+local retriggertracker = 0
 
 local function grid_led_array_init()
   init_grid = {}
@@ -70,7 +71,7 @@ local function grid_led_clear()
   end
 end
 
-local function note_hash(x,y)
+local function note_hasher(x,y)
   return y*40 + x
 end
 
@@ -156,10 +157,10 @@ function g.key(x, y, z)
         holding = true
       elseif y == 8 and holding then
         for id in pairs(held_notes) do
+          e = held_notes[id]
+          e.state = 0
           held_notes[id] = nil
-          engine.stop(id)
-          currently_playing[id] = nil
-          nvoices = nvoices - 1
+          matrix_note(e)
         end
         id = y*16 + x
         lighting_over_time.fixed[id] = nil
@@ -216,7 +217,7 @@ function g.key(x, y, z)
     end
   else
     local e = {}
-    e.id = note_hash(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 -- 2nd to last digit of ID specifies source
+    e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 -- 2nd to last digit of ID specifies source
     e.x = grid_window.x + x - 2
     e.y = grid_window.y - y + 1
     e.state = z
@@ -387,37 +388,101 @@ function print_table_elements(table)
 end
 
 function matrix_note(e)
+  local note_num = matrix_coord_to_note_num(e.x, e.y)
+  if e.state > 0 then
+    if nvoices < MAX_NUM_VOICES then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          if params:string("same_note_behavior") == "ignore" then
+            return
+          elseif params:string("same_note_behavior") == "detuned" then
+            detune = math.random(-1, 1) * 3
+
+            -- if note already being played is from same source, change id to not conflict
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end
+          elseif params:string("same_note_behavior") == "retrigger" then
+            -- stop engine from playing any instance of same note, but leave note in currently_playing
+            for i=0,99 do
+              engine.stop(note_hash2*100+i)
+            end
+            nvoices = nvoices - 1
+
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                retriggertracker = retriggertracker + 1
+                e.id = e.id + util.wrap(retriggertracker, 0, 9)
+              end
+            end
+          elseif params:string("same_note_behavior") == "separate" then
+          if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end 
+          end
+        end
+      end
+      start_note(e.id, note_num, detune)
+      currently_playing[e.id] = e
+      nvoices = nvoices + 1
+    else
+      print("maximum voices reached")
+    end
+  else
+    -- if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
+    --   engine.stop(e.id)
+    --   currently_playing[e.id] = nil
+    --   nvoices = nvoices - 1
+    -- end
+
+    if held_notes[e.id] ~= nil then
+      return
+    end
+
+    currently_playing[e.id] = nil
+
+    --if in retrigger mode, only stop note if no other sources are playing it
+    if params:string("same_note_behavior") == "retrigger" then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          return -- if another source is playing the note, don't stop engine
+        end
+      end
+
+      --since no instances of same note are playing, stop any possible instance of the note
+      for i=0,99 do
+        engine.stop(note_hash*100+i)
+      end
+    end
+
+    engine.stop(e.id)
+    nvoices = nvoices - 1
+  end
+  -- --gridredraw()
   -- if held_notes[e.id] ~= nil then
-  --   if params:string("same_note_behavior") == "ignore" then
-  --     return
+  --   return
   -- end
   
   -- local note_num = matrix_coord_to_note_num(e.x, e.y)
   -- if e.state > 0 then
   --   if nvoices < MAX_NUM_VOICES then
-  --     id = e.id .. ""
-  --     id = id:sub(1,-3)
-  --     detune = 0
-  --     for id2,e2 in pairs(currently_playing) do
-  --       id2 = id2 .. ""
-  --       id2 = id2:sub(1,-3)
-  --       if id == id2 then
-  --       if params:string("same_note_behavior") == "ignore" then
-  --         return
-  --       elseif params:string("same_note_behavior") == "detuned" then
-  --         detune = math.random(-200, 200) / 100
-
-  --         if currently_playing[e.id] ~= nil then
-  --           while currently_playing[e.id] ~= nil do
-  --             e.id = e.id + 1
-  --           end
-
-  --       end
-  --     start_note(e.id, note_num, detune)
+  --     start_note(e.id, note_num)
   --     currently_playing[e.id] = e
   --     nvoices = nvoices + 1
-  --   else
-  --     print("maximum voices reached")
   --   end
   -- else
   --   if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
@@ -427,25 +492,6 @@ function matrix_note(e)
   --   end
   -- end
   -- --gridredraw()
-  if held_notes[e.id] ~= nil then
-    --return
-  end
-  
-  local note_num = matrix_coord_to_note_num(e.x, e.y)
-  if e.state > 0 then
-    if nvoices < MAX_NUM_VOICES then
-      start_note(e.id, note_num)
-      currently_playing[e.id] = e
-      nvoices = nvoices + 1
-    end
-  else
-    if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
-      engine.stop(e.id)
-      currently_playing[e.id] = nil
-      nvoices = nvoices - 1
-    end
-  end
-  --gridredraw()
 end
 
 function grid_note_pattern(e)
@@ -481,9 +527,9 @@ function gridredraw()
 end
 
 function enc(n,delta)
-  if metrokey and k3 then
+  if metrokey and k1 then
     if n == 1 then
-      metrolevel = util.clamp(metrolevel + delta/10, 0, 30)
+      metrolevel = util.clamp(metrolevel + delta/10, 0, 50)
       softcut.level(1, metrolevel)
     elseif n == 2 then
       placeholder = 1
@@ -498,7 +544,7 @@ function enc(n,delta)
     elseif n == 3 then
       divdenom = util.clamp(divdenom + delta, 1, 1000000)
     end
-  elseif k3 then
+  elseif k1 then
     if n == 1 then
       params:set("output_level", params:get("output_level") + delta/2)
     elseif n == 2 then
@@ -540,9 +586,9 @@ function key(n,z)
       params:set("enc3",2)
     end
   elseif n == 1 and z == 1 then
-    k3 = true
+    k1 = true
   elseif n == 1 and z == 0 then
-    k3 = false
+    k1 = false
   end
   redraw()
 end
