@@ -10,7 +10,7 @@ grid_led = 1
 
 local currently_playing = {}
 local enc_control = 0
-local pressed_notes = {}
+pressed_notes = {}
 local held_notes = {}
 local holding = false
 local pattern_1_led_level = 8
@@ -23,8 +23,12 @@ local screen_refresh_metro
 local MAX_NUM_VOICES = 16
 
 local options = {
-  OUTPUT = {"audio", "crow out 1+2", "crow ii JF"}
+  same_note_behavior = {"retrigger", "detuned", "ignore"}
 }
+
+local sources = {pressed = 1,
+                pattern1 = 2,
+                pattern2 = 3}
 
 engine.name = 'PolySub'
 
@@ -80,6 +84,7 @@ function init()
   params:add_option("enc1","enc1", {"shape","timbre","noise","cut","ampatk","amprel"}, 4)
   params:add_option("enc2","enc2", {"shape","timbre","noise","cut","ampatk","amprel"}, 5)
   params:add_option("enc3","enc3", {"shape","timbre","noise","cut","ampatk", "amprel"}, 6)
+  params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 1)
 
   params:add_separator()
 
@@ -87,25 +92,11 @@ function init()
 
   params:add_separator()
   
-  params:add{type = "option", id = "output", name = "output",
-    options = options.OUTPUT,
-    action = function(value)
-      engine.stopAll()
-      if value == 2 then crow.output[2].action = "{to(5,0),to(0,0.25)}"
-      elseif value == 3 then
-        crow.ii.pullup(true)
-        crow.ii.jf.mode(1)
-      end
-    end
-  }
-  
   engine.stopAll()
 
   params:bang()
 
   grid_led = grid_led_array_init()
-
-  --if g then gridredraw() end
 
   screengrid_refresh_metro = metro.init()
   screengrid_refresh_metro.event = function(stage)
@@ -132,9 +123,9 @@ function init()
   softcut.play(1,1)
 end
 
-local function create_fixed_pulse(x, y, pmin, pmax, rate, ptype)
+local function create_fixed_pulse(x, y, pmin, pmax, rate)
   pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed"}
-  pulse.frames_per_step = math.floor(1 / rate * visual_refresh_rate / (2*(pmax - pmin)))
+  pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
   pulse.frametrack = pulse.frames_per_step
 
   id = y*16 + x
@@ -145,7 +136,7 @@ end
 
 local function create_mod_pulse(range, rate, note_id)
   pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id}
-  pulse.frames_per_step = math.floor(1 / rate * visual_refresh_rate / (2*(range)))
+  pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(range)))
   pulse.frametrack = pulse.frames_per_step
 
   lighting_over_time.mod[note_id] = pulse
@@ -161,8 +152,6 @@ function g.key(x, y, z)
           e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
           held_notes[id] = e
         end
-        --pulsing[x*8 + y] = fixed_pulse_constructor(x, y, 2, 8, .75)
-        --lighting_over_time[] = fixed_pulse_constructor(x, y, 2, 8, .75))
         create_fixed_pulse(x, y, 2, 8, .75)
         holding = true
       elseif y == 8 and holding then
@@ -207,8 +196,16 @@ function g.key(x, y, z)
         mode_transpose = 1 - mode_transpose
       elseif y == 1 then
         grid_window.y = grid_window.y + 1
+
+        for id, e in pairs(pressed_notes) do
+          e.y_transpose_since_press = e.y_transpose_since_press + 1
+        end
       elseif y == 2 then
         grid_window.y = grid_window.y - 1
+
+        for id, e in pairs(pressed_notes) do
+          e.y_transpose_since_press = e.y_transpose_since_press - 1
+        end
       elseif y == 7 then
         altkey = true
       end
@@ -219,37 +216,38 @@ function g.key(x, y, z)
     end
   else
     local e = {}
-    e.id = note_hash(grid_window.x + x - 2, grid_window.y - y + 1) * 10 + 1 -- last digit of ID specifies source
+    e.id = note_hash(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 -- 2nd to last digit of ID specifies source
     e.x = grid_window.x + x - 2
     e.y = grid_window.y - y + 1
     e.state = z
     pat:watch(e)
-    grid_note(e)
     if z == 1 then
-      e.grid_x = x
-      e.grid_y = y
+      matrix_note(e)
+      e.x_transpose_since_press = 0
+      e.y_transpose_since_press = 0
       pressed_notes[e.id] = e
     else
-      grid_note(e)
-      pressed_notes[e.id] = nil
       for id, e2 in pairs(pressed_notes) do
-        if x == e2.grid_x and y == e2.grid_y then
+        if (grid_window.x + x - 2) == (e2.x + e2.x_transpose_since_press) and (grid_window.y - y + 1) == (e2.y + e2.y_transpose_since_press) then
           e2.state = 0
-          grid_note(e2)
-          pressed_notes.id = nil
+          matrix_note(e2)
+          pressed_notes[id] = nil
+          return
         end
       end
+      pressed_notes[e.id] = nil
+      matrix_note(e)
     end
   end
-  gridredraw()
+  --gridredraw()
 end
 
 local function note_id_to_info(id)
   id = id .. ""
-  n = id:sub(1,-2)
+  n = id:sub(1,-3)
   y = math.floor(n/40)
   x = n - y*40
-  return {x = x, y = y, source = id:sub(-1)}
+  return {x = x, y = y, source = id:sub(-2,-2)}
 end
 
 function lighting_update_handler()
@@ -281,7 +279,6 @@ function lighting_update_handler()
     end
 
     if e.pulser ~= nil then
-      print(e.pulser.current)
       grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, e.pulser.current) 
     end
   end
@@ -345,15 +342,9 @@ function grid_led_add(x, y, val)
   end
 end
 
-local function start_note(id, note)
-  if params:get("output") == 1 then
-    engine.start(id, music.note_num_to_freq(note))
-  elseif params:get("output") == 2 then
-    crow.output[1].volts = note/12
-    crow.output[2].execute()
-  elseif params:get("output") == 3 then
-    crow.ii.jf.play_note(note/12,5)
-  end
+local function start_note(id, note, detune)
+  detune = detune or 0
+  engine.start(id, music.note_num_to_freq(note) + detune)
 end  
 
 local function stop_note(id)
@@ -379,9 +370,65 @@ local function note_num_to_note_name (x)
   return note_table[(x % 12) + 1]
 end
 
-function grid_note(e)
+function table_size(table)
+  count = 0
+  for key, val in pairs(table) do 
+    print("key: " .. key .. " val: " .. val.id)
+    count = count + 1 
+  end
+  print("number of elements: " .. count)
+  return count
+end
+
+function print_table_elements(table)
+  for key, val in pairs(table) do
+    print("key: " .. key .. " val: " .. val.id)
+  end
+end
+
+function matrix_note(e)
+  -- if held_notes[e.id] ~= nil then
+  --   if params:string("same_note_behavior") == "ignore" then
+  --     return
+  -- end
+  
+  -- local note_num = matrix_coord_to_note_num(e.x, e.y)
+  -- if e.state > 0 then
+  --   if nvoices < MAX_NUM_VOICES then
+  --     id = e.id .. ""
+  --     id = id:sub(1,-3)
+  --     detune = 0
+  --     for id2,e2 in pairs(currently_playing) do
+  --       id2 = id2 .. ""
+  --       id2 = id2:sub(1,-3)
+  --       if id == id2 then
+  --       if params:string("same_note_behavior") == "ignore" then
+  --         return
+  --       elseif params:string("same_note_behavior") == "detuned" then
+  --         detune = math.random(-200, 200) / 100
+
+  --         if currently_playing[e.id] ~= nil then
+  --           while currently_playing[e.id] ~= nil do
+  --             e.id = e.id + 1
+  --           end
+
+  --       end
+  --     start_note(e.id, note_num, detune)
+  --     currently_playing[e.id] = e
+  --     nvoices = nvoices + 1
+  --   else
+  --     print("maximum voices reached")
+  --   end
+  -- else
+  --   if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
+  --     engine.stop(e.id)
+  --     currently_playing[e.id] = nil
+  --     nvoices = nvoices - 1
+  --   end
+  -- end
+  -- --gridredraw()
   if held_notes[e.id] ~= nil then
-    return
+    --return
   end
   
   local note_num = matrix_coord_to_note_num(e.x, e.y)
