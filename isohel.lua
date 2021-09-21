@@ -7,6 +7,7 @@ local polysub = include 'we/lib/polysub'
 local g = grid.connect()
 
 grid_led = 1
+grid_presses = 1
 
 local currently_playing = {}
 local enc_control = 0
@@ -62,6 +63,19 @@ local function grid_led_array_init()
   return init_grid
 end
 
+local function grid_press_array_init()
+  init_grid = {}
+
+  for x=1,16 do
+    init_grid[x] = {}
+    for y=1,8 do
+      init_grid[x][y] = 0
+    end
+  end
+
+  return init_grid
+end
+
 local function grid_led_clear()
   for x=1,16 do
     for y=1,8 do
@@ -98,6 +112,7 @@ function init()
   params:bang()
 
   grid_led = grid_led_array_init()
+  grid_presses = grid_press_array_init()
 
   screengrid_refresh_metro = metro.init()
   screengrid_refresh_metro.event = function(stage)
@@ -146,16 +161,17 @@ local function create_mod_pulse(range, rate, note_id)
 end
 
 function g.key(x, y, z)
+  grid_presses[x][y] = z
   if x == 1 then
     if z == 1 then
-      if y == 8 and not holding then
+      if y == 8 and not holding and not altkey then
         for id, e in pairs(pressed_notes) do
           e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
           held_notes[id] = e
         end
         create_fixed_pulse(x, y, 2, 8, .75)
         holding = true
-      elseif y == 8 and holding then
+      elseif y == 8 and holding and not altkey then
         for id in pairs(held_notes) do
           e = held_notes[id]
           e.state = 0
@@ -164,8 +180,6 @@ function g.key(x, y, z)
         end
         id = y*16 + x
         lighting_over_time.fixed[id] = nil
-        --pulsing[id] = nil
-        --g:led(x, y, 0)
         holding = false
       elseif y == 3 and pat.rec == 0 then
         mode_transpose = 0
@@ -223,10 +237,38 @@ function g.key(x, y, z)
     e.state = z
     pat:watch(e)
     if z == 1 then
-      matrix_note(e)
-      e.x_transpose_since_press = 0
-      e.y_transpose_since_press = 0
-      pressed_notes[e.id] = e
+      if altkey and grid_presses[1][8] == 1 then
+        if held_notes[e.id] ~= nil then
+          print("hey")
+          e.state = 0
+          held_notes[e.id] = nil
+          matrix_note(e)
+          if table_size(held_notes) == 0 then
+            lighting_over_time.fixed[129] = nil
+            holding = false
+          end
+        else
+          e.pulser = create_mod_pulse(holding_led_pulse_level, .75, e.id)
+          matrix_note(e)
+          if table_size(held_notes) == 0 then
+            create_fixed_pulse(1, 8, 2, 8, .75)
+            holding = true
+          else
+            for id, e2 in pairs(held_notes) do
+              e.pulser.frametrack = e2.pulser.frametrack
+              e.pulser.dir = e2.pulser.dir
+              e.pulser.current = e2.pulser.current
+              break
+            end
+          end
+          held_notes[e.id] = e
+        end
+      else
+        matrix_note(e)
+        e.x_transpose_since_press = 0
+        e.y_transpose_since_press = 0
+        pressed_notes[e.id] = e
+      end
     else
       for id, e2 in pairs(pressed_notes) do
         if (grid_window.x + x - 2) == (e2.x + e2.x_transpose_since_press) and (grid_window.y - y + 1) == (e2.y + e2.y_transpose_since_press) then
@@ -253,6 +295,7 @@ end
 
 function lighting_update_handler()
   grid_led_clear()
+
   -- light c notes
   for x = 2,16,1 do
     for y = 1,8,1 do
@@ -305,7 +348,7 @@ function lighting_update_handler()
     obj.frametrack = obj.frametrack - 1
     if obj.frametrack == 0 then
       obj.current = obj.current + obj.dir
-      if obj.current == 0 then
+      if obj.current <= 0 then
         obj.dir = 1
       elseif obj.current == obj.range then
         obj.dir = -1
