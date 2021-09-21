@@ -93,8 +93,8 @@ function init()
   m = midi.connect()
   m.event = midi_event
 
-  pat = pattern_time.new()
-  pat.process = grid_note_trans
+  pat1 = pattern_time.new()
+  pat1.process = pattern_note
 
   params:add_option("enc1","enc1", {"shape","timbre","noise","cut","ampatk","amprel"}, 4)
   params:add_option("enc2","enc2", {"shape","timbre","noise","cut","ampatk","amprel"}, 5)
@@ -181,31 +181,26 @@ function g.key(x, y, z)
         id = y*16 + x
         lighting_over_time.fixed[id] = nil
         holding = false
-      elseif y == 3 and pat.rec == 0 then
-        mode_transpose = 0
-        trans.x = 5
-        trans.y = 5
-        pat:stop()
-        engine.stopAll()
-        pat:clear()
-        pat:rec_start()
-      elseif y == 3 and pat.rec == 1 then
-        pat:rec_stop()
-        if pat.count > 0 then
-          root.x = pat.event[1].x 
-          root.y = pat.event[1].y 
-          trans.x = root.x
-          trans.y = root.y
-          pat:start()
+      elseif y == 3 and pat1.rec == 0 then
+        pat1:stop()
+        clear_notes("pattern1")
+        nvoices = 0
+        pat1:clear()
+        pat1:rec_start()
+      elseif y == 3 and pat1.rec == 1 then
+        pattern_rec_stop(1)
+        --pat1:rec_stop()
+        if pat1.count > 0 then
+          pat1:start()
         end
-      elseif y == 4 and pat.play == 0 and pat.count > 0 then
-        if pat.rec == 1 then
-          pat:rec_stop()
+      elseif y == 4 and pat1.play == 0 and pat1.count > 0 then
+        if pat1.rec == 1 then
+          pat1:rec_stop()
         end
-        pat:start()
-      elseif y == 4 and pat.play == 1 then
-        pat:stop()
-        engine.stopAll()
+        pat1:start()
+      elseif y == 4 and pat1.play == 1 then
+        pat1:stop()
+        clear_notes("pattern1")
         nvoices = 0
       elseif y == 5 then
         mode_transpose = 1 - mode_transpose
@@ -230,12 +225,18 @@ function g.key(x, y, z)
       end
     end
   else
-    local e = {}
-    e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 -- 2nd to last digit of ID specifies source
+    p = {}
+    p.x = grid_window.x + x - 2
+    p.y = grid_window.y - y + 1
+    p.state = z
+    p.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern1 * 10 -- 2nd to last digit of ID specifies source
+    pat1:watch(p)
+
+    e = {}
     e.x = grid_window.x + x - 2
     e.y = grid_window.y - y + 1
     e.state = z
-    pat:watch(e)
+    e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 
     if z == 1 then
       if altkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
@@ -397,6 +398,62 @@ local function stop_note(id)
   end      
 end
 
+function pattern_rec_stop(n)
+  for id, e in pairs(pressed_notes) do
+    p = {}
+    p.x = e.x
+    p.y = e.y
+    p.state = 0
+    p.id = math.floor(e.id / 100) * 100 + sources.pattern1 * 10
+
+    pat1:watch(p)
+  end
+
+  pat1:rec_stop()
+end
+
+function clear_notes(source)
+  source = source or "all"
+
+  if source == "all" then
+    for id,e in pairs(currently_playing) do
+      currently_playing[id] = nil
+      e.state = 0
+      matrix_note(e)
+    end
+
+    for id in pairs(pressed_notes) do
+      pressed_notes[id] = nil
+    end
+
+    if holding then
+      for id in pairs(held_notes) do
+        held_notes[id] = nil
+      end
+      lighting_over_time.fixed[129] = nil
+      holding = false
+    end
+  end
+
+  if source == "pattern1" then
+    print("hey")
+    for id, e in pairs(currently_playing) do
+      if get_digit(id, 2) == sources.pattern1 then
+        currently_playing[id] = nil
+        e.state = 0
+        matrix_note(e)
+      end
+    end
+  end
+
+end
+
+function get_digit(num, digit)
+  local n = 10 ^ digit
+  local n1 = 10 ^ (digit - 1)
+  return math.floor((num % n) / n1)
+end
+
 function grid_to_note_num(x,y)
   note_num = (grid_window.y - y + 1)*5 + grid_window.x + x - 2
   return note_num
@@ -412,6 +469,12 @@ end
 
 local function note_num_to_note_name (x)
   return note_table[(x % 12) + 1]
+end
+
+local function clear_table(table)
+  for i in pairs(table) do
+    table[i] = nil
+  end
 end
 
 function table_size(table)
@@ -537,21 +600,81 @@ function matrix_note(e)
   -- --gridredraw()
 end
 
-function grid_note_pattern(e)
-  local id = e.id .. "p"
-  local note = grid_to_note_num(e.x, e.y) - offset + e.offset
+function pattern_note(e)
+  local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
     if nvoices < MAX_NUM_VOICES then
-      start_note(id, note)
-      currently_playing[id] = {x = e.x, y = e.y, offset = e.offset}
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          if params:string("same_note_behavior") == "ignore" then
+            return
+          elseif params:string("same_note_behavior") == "detuned" then
+            detune = math.random(-1, 1) * 3
+
+            -- if note already being played is from same source, change id to not conflict
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end
+          elseif params:string("same_note_behavior") == "retrigger" then
+            -- stop engine from playing any instance of same note, but leave note in currently_playing
+            for i=0,99 do
+              engine.stop(note_hash2*100+i)
+            end
+            nvoices = nvoices - 1
+
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                retriggertracker = retriggertracker + 1
+                e.id = e.id + util.wrap(retriggertracker, 0, 9)
+              end
+            end
+          elseif params:string("same_note_behavior") == "separate" then
+          if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end 
+          end
+        end
+      end
+      start_note(e.id, note_num, detune)
+      currently_playing[e.id] = e
       nvoices = nvoices + 1
+    else
+      print("maximum voices reached")
     end
   else
-    stop_note(id)
-    currently_playing[id] = nil
+    currently_playing[e.id] = nil
+
+    --if in retrigger mode, only stop note if no other sources are playing it
+    if params:string("same_note_behavior") == "retrigger" then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          return -- if another source is playing the note, don't stop engine
+        end
+      end
+
+      --since no instances of same note are playing, stop any possible instance of the note
+      for i=0,99 do
+        engine.stop(note_hash*100+i)
+      end
+    end
+
+    engine.stop(e.id)
     nvoices = nvoices - 1
   end
-  --gridredraw()
 end
 
 function gridredraw()
