@@ -9,7 +9,7 @@ local g = grid.connect()
 grid_led = 1
 grid_presses = 1
 
-local currently_playing = {}
+currently_playing = {}
 local enc_control = 0
 pressed_notes = {}
 local held_notes = {}
@@ -92,6 +92,9 @@ end
 function init()
   m = midi.connect()
   m.event = midi_event
+
+  pat2 = pattern_time.new()
+  pat2.process = pattern_note
 
   pat1 = pattern_time.new()
   pat1.process = pattern_note
@@ -181,27 +184,41 @@ function g.key(x, y, z)
         id = y*16 + x
         lighting_over_time.fixed[id] = nil
         holding = false
-      elseif y == 3 and pat1.rec == 0 then
+      elseif y == 3 and altkey then
         pat1:stop()
         clear_notes("pattern1")
-        nvoices = 0
         pat1:clear()
+        pat1:rec_start()
+      elseif y == 3 and pat1.rec == 0 and pat1.count == 0 then
         pat1:rec_start()
       elseif y == 3 and pat1.rec == 1 then
         pattern_rec_stop(1)
-        --pat1:rec_stop()
         if pat1.count > 0 then
           pat1:start()
         end
-      elseif y == 4 and pat1.play == 0 and pat1.count > 0 then
-        if pat1.rec == 1 then
-          pat1:rec_stop()
-        end
+      elseif y == 3 and pat1.play == 0 and pat1.count > 0 then
         pat1:start()
-      elseif y == 4 and pat1.play == 1 then
+      elseif y == 3 and pat1.play == 1 then
         pat1:stop()
         clear_notes("pattern1")
-        nvoices = 0
+        holding = false
+      elseif y == 4 and altkey then
+        pat2:stop()
+        clear_notes("pattern2")
+        pat2:clear()
+        pat2:rec_start()
+      elseif y == 4 and pat2.rec == 0 and pat2.count == 0 then
+        pat2:rec_start()
+      elseif y == 4 and pat2.rec == 2 then
+        pattern_rec_stop(2)
+        if pat2.count > 0 then
+          pat2:start()
+        end
+      elseif y == 4 and pat2.play == 0 and pat2.count > 0 then
+        pat2:start()
+      elseif y == 4 and pat2.play == 2 then
+        pat2:stop()
+        clear_notes("pattern2")
       elseif y == 5 then
         mode_transpose = 1 - mode_transpose
       elseif y == 1 then
@@ -232,6 +249,13 @@ function g.key(x, y, z)
     p.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern1 * 10 -- 2nd to last digit of ID specifies source
     pat1:watch(p)
 
+    p2 = {}
+    p2.x = grid_window.x + x - 2
+    p2.y = grid_window.y - y + 1
+    p2.state = z
+    p2.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern2 * 10 
+    pat2:watch(p2)
+
     e = {}
     e.x = grid_window.x + x - 2
     e.y = grid_window.y - y + 1
@@ -240,7 +264,7 @@ function g.key(x, y, z)
     if z == 1 then
       if altkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
-          print("hey")
+          --print("hey")
           e.state = 0
           held_notes[e.id] = nil
           matrix_note(e)
@@ -439,13 +463,22 @@ function clear_notes(source)
     print("hey")
     for id, e in pairs(currently_playing) do
       if get_digit(id, 2) == sources.pattern1 then
+        e.state = 0
+        matrix_note(e)
+        e.state = 1
+      end
+    end
+  end
+
+  if source == "pattern2" then
+    for id, e in pairs(currently_playing) do
+      if get_digit(id, 2) == sources.pattern2 then
         currently_playing[id] = nil
         e.state = 0
         matrix_note(e)
       end
     end
   end
-
 end
 
 function get_digit(num, digit)
@@ -525,7 +558,7 @@ function matrix_note(e)
             if currently_playing[e.id] ~= nil then
               while currently_playing[e.id] ~= nil do
                 retriggertracker = retriggertracker + 1
-                e.id = e.id + util.wrap(retriggertracker, 0, 9)
+                e.id = math.floor(e.id / 10) * 10 + util.wrap(retriggertracker, 0, 9)
               end
             end
           elseif params:string("same_note_behavior") == "separate" then
