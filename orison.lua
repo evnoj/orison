@@ -14,8 +14,8 @@ local enc_control = 0
 pressed_notes = {}
 local held_notes = {}
 local holding = false
-local pattern_1_led_level = 3
-local pattern_2_led_level = 8
+local pattern_1_led_level = 8
+local pattern_2_led_level = 3
 local holding_led_pulse_level = 4
 local pattern1_timefactor = 1
 local pattern2_timefactor = 1
@@ -52,6 +52,7 @@ local altkey = false
 local file = _path.dust.."audio/metro-tick.wav"
 local retriggertracker = 0
 local enc_control_timefactor = false
+local patterns = {}
 
 local function grid_led_array_init()
   init_grid = {}
@@ -96,11 +97,13 @@ function init()
   m = midi.connect()
   m.event = midi_event
 
-  pat2 = pattern_time.new()
-  pat2.process = pattern_note
-
   pat1 = pattern_time.new()
   pat1.process = pattern_note
+  patterns[1] = pat1
+
+  pat2 = pattern_time.new()
+  pat2.process = pattern_note
+  patterns[2] = pat2
 
   params:add_option("enc1","enc1", {"shape","timbre","noise","cut","ampatk","amprel"}, 4)
   params:add_option("enc2","enc2", {"shape","timbre","noise","cut","ampatk","amprel"}, 5)
@@ -166,6 +169,12 @@ local function create_fixed_pulse(x, y, pmin, pmax, rate, shape)
   return pulse
 end
 
+local function clear_fixed_pulse(x, y)
+  id = y*16 + x
+  lighting_over_time.fixed[id] = nil
+end
+
+
 local function create_mod_pulse(range, rate, note_id, shape)
   pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
 
@@ -219,8 +228,7 @@ local function stop_holding()
     matrix_note(e)
   end
 
-  id = 8*16 + 1
-  lighting_over_time.fixed[id] = nil
+  clear_fixed_pulse(1,8)
   holding = false
 end
 
@@ -233,6 +241,123 @@ local function remove_from_held(id)
   if table_size(held_notes) == 0 then
     stop_holding()
   end
+end
+
+local function pattern_stop(n)
+  pattern = patterns[n]
+  pattern:stop()
+  clear_notes("pattern" .. n)
+
+  if n == 1 then
+    x = 1
+    y = 3
+  elseif n == 2 then
+    x = 1
+    y = 4
+  end
+  
+  if pattern.count == 0 then
+    grid_led[x][y].add = nil
+  else
+    grid_led[x][y].add = 2
+  end
+
+  clear_fixed_pulse(x,y)
+end
+
+local function pattern_record_start(n)
+  pattern = patterns[n]
+  pattern_stop(n)
+  pattern:clear()
+  pattern:rec_start()
+
+  if n == 1 then
+    x = 1
+    y = 3
+    level = pattern_1_led_level
+  elseif n == 2 then
+    x = 1
+    y = 4
+    level = pattern_2_led_level + 2
+  end
+
+  create_fixed_pulse(x,y,0,level,.9,"fall")
+end
+
+local function pattern_record_stop(n)
+  pattern = patterns[n]
+
+  for id, e in pairs(pressed_notes) do
+    p = {}
+    p.x = e.x
+    p.y = e.y
+    p.state = 0
+    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
+
+    pattern:watch(p)
+  end
+
+  pattern:rec_stop()
+
+  if n == 1 then
+    x = 1
+    y = 3
+  elseif n == 2 then
+    x = 1
+    y = 4
+  end
+
+  if pattern.count == 0 then
+    grid_led[x][y].add = nil
+  else
+    grid_led[x][y].add = 2
+  end
+
+  clear_fixed_pulse(x,y)
+end
+
+local function pattern_start(n)
+  pattern = patterns[n]
+
+  if pattern.count == 0 then
+    return
+  end
+
+  pattern:start()
+
+  if n == 1 then
+    x = 1
+    y = 3
+    level = pattern_1_led_level
+  elseif n == 2 then
+    x = 1
+    y = 4
+    level = pattern_2_led_level + 2
+  end
+
+  grid_led[x][y].add = nil
+
+  create_fixed_pulse(x,y,0,level,.9,"rise")
+end
+
+local function pattern_clear(n)
+  pattern = patterns[n]
+
+  if pattern.play == 1 then
+    pattern_stop(n)
+  end
+
+  pattern:clear()
+
+  if n == 1 then
+    x = 1
+    y = 3
+  elseif n == 2 then
+    x = 1
+    y = 4
+  end
+  
+  grid_led[x][y].add = nil
 end
 
 function g.key(x, y, z)
@@ -254,40 +379,35 @@ function g.key(x, y, z)
           end
         end
       elseif y == 3 and altkey then
-        pat1:stop()
-        clear_notes("pattern1")
-        pat1:clear()
-        pat1:rec_start()
+        pattern_stop(1)
+        pattern_clear(1)
+        pattern_record_start(1)
       elseif y == 3 and pat1.rec == 0 and pat1.count == 0 then
-        pat1:rec_start()
+        pattern_record_start(1)
       elseif y == 3 and pat1.rec == 1 then
-        pattern_rec_stop(1)
+        pattern_record_stop(1)
         if pat1.count > 0 then
-          pat1:start()
+          pattern_start(1)
         end
       elseif y == 3 and pat1.play == 0 and pat1.count > 0 then
-        pat1:start()
+        pattern_start(1)
       elseif y == 3 and pat1.play == 1 then
-        pat1:stop()
-        clear_notes("pattern1")
-        holding = false
+        pattern_stop(1)
       elseif y == 4 and altkey then
-        pat2:stop()
-        clear_notes("pattern2")
-        pat2:clear()
-        pat2:rec_start()
+        pattern_stop(2)
+        pattern_clear(2)
+        pattern_record_start(2)
       elseif y == 4 and pat2.rec == 0 and pat2.count == 0 then
-        pat2:rec_start()
+        pattern_record_start(2)
       elseif y == 4 and pat2.rec == 1 then
-        pattern_rec_stop(2)
+        pattern_record_stop(2)
         if pat2.count > 0 then
-          pat2:start()
+          pattern_start(2)
         end
       elseif y == 4 and pat2.play == 0 and pat2.count > 0 then
-        pat2:start()
+        pattern_start(2)
       elseif y == 4 and pat2.play == 1 then
-        pat2:stop()
-        clear_notes("pattern2")
+        pattern_stop(2)
       elseif y == 5 then
         mode_transpose = 1 - mode_transpose
       elseif y == 1 then
@@ -775,6 +895,9 @@ function gridredraw()
     for y=1,8 do
       if true then
       --if grid_led[x][y].dirty then
+        if grid_led[x][y].add ~= nil then
+          grid_led_add(x, y, grid_led[x][y].add)
+        end
       g:led(x,y,grid_led[x][y].level)
     end
   end
