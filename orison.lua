@@ -30,10 +30,10 @@ local options = {
 }
 
 local sources = {pressed = 1,
-                pattern1 = 2,
-                pattern2 = 3}
+  pattern1 = 2,
+  pattern2 = 3}
 
-engine.name = 'PolySub'
+  engine.name = 'PolySub'
 
 -- current count of active voices
 local nvoices = 0
@@ -145,9 +145,19 @@ function init()
   softcut.play(1,1)
 end
 
-local function create_fixed_pulse(x, y, pmin, pmax, rate)
-  pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed"}
-  pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
+local function create_fixed_pulse(x, y, pmin, pmax, rate, shape)
+  pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed", shape = shape}
+
+  if shape == "wave" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
+  elseif shape == "rise" or shape == "fall" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (pmax - pmin))
+
+    if shape == "fall" then
+      pulse.dir = -1
+      pulse.current = pmax
+    end
+  end
   pulse.frametrack = pulse.frames_per_step
 
   id = y*16 + x
@@ -156,9 +166,19 @@ local function create_fixed_pulse(x, y, pmin, pmax, rate)
   return pulse
 end
 
-local function create_mod_pulse(range, rate, note_id)
-  pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id}
-  pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(range)))
+local function create_mod_pulse(range, rate, note_id, shape)
+  pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
+
+  if shape == "wave" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*range))
+  elseif shape == "rise" or shape == "fall" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / range)
+
+    if shape == "fall" then
+      pulse.dir = -1
+      pulse.current = range
+    end
+  end
   pulse.frametrack = pulse.frames_per_step
 
   lighting_over_time.mod[note_id] = pulse
@@ -167,8 +187,28 @@ local function create_mod_pulse(range, rate, note_id)
 end
 
 local function start_holding()
-  create_fixed_pulse(1, 8, 2, 8, .75)
+  if holding then
+    return
+  end
+
+  create_fixed_pulse(1, 8, 2, 8, .75, "rise")
   holding = true
+end
+
+local function add_to_held(note)
+  note.pulser = create_mod_pulse(holding_led_pulse_level, .75, id, "rise")
+
+  if holding then
+    for id, e2 in pairs(held_notes) do
+      note.pulser.frametrack = e2.pulser.frametrack
+      note.pulser.dir = e2.pulser.dir
+      note.pulser.current = e2.pulser.current
+      break
+    end
+  end
+
+  held_notes[note.id] = note
+  start_holding()
 end
 
 local function stop_holding()
@@ -184,6 +224,16 @@ local function stop_holding()
   holding = false
 end
 
+local function remove_from_held(id)
+  e = held_notes[id]
+  e.state = 0
+  held_notes[id] = nil
+  matrix_note(e)
+
+  if table_size(held_notes) == 0 then
+    stop_holding()
+  end
+end
 
 function g.key(x, y, z)
   grid_presses[x][y] = z
@@ -191,31 +241,16 @@ function g.key(x, y, z)
     if z == 1 then
       if y == 8 and not holding and not altkey then
         for id, e in pairs(pressed_notes) do
-          e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
-          held_notes[id] = e
+          add_to_held(e)
         end
-        start_holding()
       elseif y == 8 and holding and not altkey then
         stop_holding()
       elseif y == 8 and altkey then
         for id, e in pairs(pressed_notes) do
-          if not holding then
-            e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
-            held_notes[id] = e
-            start_holding()
-          elseif held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
-            e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
-            held_notes[id] = e
-            print("hey")
+          if held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
+            add_to_held(e)
           else
-            e2 = held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed]
-            held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] = nil
-            e2.state = 0
-            matrix_note(e2)
-
-            if table_size(held_notes) == 0 then
-              stop_holding()
-            end
+            remove_from_held(math.floor(id / 100) * 100 + 10 * sources.pressed)
           end
         end
       elseif y == 3 and altkey then
@@ -299,27 +334,10 @@ function g.key(x, y, z)
     if z == 1 then
       if altkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
-          e.state = 0
-          held_notes[e.id] = nil
-          matrix_note(e)
-          if table_size(held_notes) == 0 then
-            stop_holding()
-          end
+          remove_from_held(e.id)
         else
-          e.pulser = create_mod_pulse(holding_led_pulse_level, .75, e.id)
+          add_to_held(e)
           matrix_note(e)
-          if table_size(held_notes) == 0 then
-            create_fixed_pulse(1, 8, 2, 8, .75)
-            holding = true
-          else
-            for id, e2 in pairs(held_notes) do
-              e.pulser.frametrack = e2.pulser.frametrack
-              e.pulser.dir = e2.pulser.dir
-              e.pulser.current = e2.pulser.current
-              break
-            end
-          end
-          held_notes[e.id] = e
         end
       else
         matrix_note(e)
@@ -394,8 +412,18 @@ function lighting_update_handler()
 
       if obj.current == obj.pmin then
         obj.dir = 1
+
+        if obj.shape == "fall" then
+          obj.current = obj.pmax
+          obj.dir = -1
+        end
       elseif obj.current == obj.pmax then
         obj.dir = -1        
+
+        if obj.shape == "rise" then
+          obj.current = obj.pmin
+          obj.dir = 1
+        end
       end
 
       obj.frametrack = obj.frames_per_step
@@ -406,10 +434,20 @@ function lighting_update_handler()
     obj.frametrack = obj.frametrack - 1
     if obj.frametrack == 0 then
       obj.current = obj.current + obj.dir
-      if obj.current <= 0 then
+      if obj.current == 0 then
         obj.dir = 1
+
+        if obj.shape == "fall" then
+          obj.current = obj.range
+          obj.dir = -1
+        end
       elseif obj.current == obj.range then
-        obj.dir = -1
+        obj.dir = -1        
+
+        if obj.shape == "rise" then
+          obj.current = 0
+          obj.dir = 1
+        end
       end
 
       obj.frametrack = obj.frames_per_step
@@ -608,7 +646,7 @@ function matrix_note(e)
               end
             end
           elseif params:string("same_note_behavior") == "separate" then
-          if currently_playing[e.id] ~= nil then
+            if currently_playing[e.id] ~= nil then
               while currently_playing[e.id] ~= nil do
                 e.id = e.id + 1
               end
@@ -689,7 +727,7 @@ function pattern_note(e)
               end
             end
           elseif params:string("same_note_behavior") == "separate" then
-          if currently_playing[e.id] ~= nil then
+            if currently_playing[e.id] ~= nil then
               while currently_playing[e.id] ~= nil do
                 e.id = e.id + 1
               end
@@ -737,12 +775,12 @@ function gridredraw()
     for y=1,8 do
       if true then
       --if grid_led[x][y].dirty then
-        g:led(x,y,grid_led[x][y].level)
-      end
+      g:led(x,y,grid_led[x][y].level)
     end
   end
+end
 
-  g:refresh()
+g:refresh()
 end
 
 function enc(n,delta)
