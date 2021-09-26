@@ -166,6 +166,25 @@ local function create_mod_pulse(range, rate, note_id)
   return pulse
 end
 
+local function start_holding()
+  create_fixed_pulse(1, 8, 2, 8, .75)
+  holding = true
+end
+
+local function stop_holding()
+  for id in pairs(held_notes) do
+    e = held_notes[id]
+    e.state = 0
+    held_notes[id] = nil
+    matrix_note(e)
+  end
+
+  id = 8*16 + 1
+  lighting_over_time.fixed[id] = nil
+  holding = false
+end
+
+
 function g.key(x, y, z)
   grid_presses[x][y] = z
   if x == 1 then
@@ -175,18 +194,30 @@ function g.key(x, y, z)
           e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
           held_notes[id] = e
         end
-        create_fixed_pulse(x, y, 2, 8, .75)
-        holding = true
+        start_holding()
       elseif y == 8 and holding and not altkey then
-        for id in pairs(held_notes) do
-          e = held_notes[id]
-          e.state = 0
-          held_notes[id] = nil
-          matrix_note(e)
+        stop_holding()
+      elseif y == 8 and altkey then
+        for id, e in pairs(pressed_notes) do
+          if not holding then
+            e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
+            held_notes[id] = e
+            start_holding()
+          elseif held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
+            e.pulser = create_mod_pulse(holding_led_pulse_level, .75, id)
+            held_notes[id] = e
+            print("hey")
+          else
+            e2 = held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed]
+            held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] = nil
+            e2.state = 0
+            matrix_note(e2)
+
+            if table_size(held_notes) == 0 then
+              stop_holding()
+            end
+          end
         end
-        id = y*16 + x
-        lighting_over_time.fixed[id] = nil
-        holding = false
       elseif y == 3 and altkey then
         pat1:stop()
         clear_notes("pattern1")
@@ -268,13 +299,11 @@ function g.key(x, y, z)
     if z == 1 then
       if altkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
-          --print("hey")
           e.state = 0
           held_notes[e.id] = nil
           matrix_note(e)
           if table_size(held_notes) == 0 then
-            lighting_over_time.fixed[129] = nil
-            holding = false
+            stop_holding()
           end
         else
           e.pulser = create_mod_pulse(holding_led_pulse_level, .75, e.id)
@@ -316,10 +345,10 @@ end
 
 local function note_id_to_info(id)
   id = id .. ""
-  n = id:sub(1,-3)
-  y = math.floor(n/40)
-  x = n - y*40
-  return {x = x, y = y, source = id:sub(-2,-2)}
+  note_hash = id:sub(1,-3)
+  y = math.floor(note_hash/40)
+  x = note_hash - y*40
+  return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
 end
 
 function lighting_update_handler()
@@ -477,7 +506,6 @@ function clear_notes(source)
   end
 
   if source == "pattern1" then
-    print("hey")
     for id, e in pairs(currently_playing) do
       if get_digit(id, 2) == sources.pattern1 then
         e.state = 0
@@ -595,12 +623,6 @@ function matrix_note(e)
       print("maximum voices reached")
     end
   else
-    -- if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
-    --   engine.stop(e.id)
-    --   currently_playing[e.id] = nil
-    --   nvoices = nvoices - 1
-    -- end
-
     if held_notes[e.id] ~= nil then
       return
     end
@@ -629,26 +651,6 @@ function matrix_note(e)
     engine.stop(e.id)
     nvoices = nvoices - 1
   end
-  -- --gridredraw()
-  -- if held_notes[e.id] ~= nil then
-  --   return
-  -- end
-  
-  -- local note_num = matrix_coord_to_note_num(e.x, e.y)
-  -- if e.state > 0 then
-  --   if nvoices < MAX_NUM_VOICES then
-  --     start_note(e.id, note_num)
-  --     currently_playing[e.id] = e
-  --     nvoices = nvoices + 1
-  --   end
-  -- else
-  --   if currently_playing[e.id] ~= nil and held_notes[e.id] == nil then
-  --     engine.stop(e.id)
-  --     currently_playing[e.id] = nil
-  --     nvoices = nvoices - 1
-  --   end
-  -- end
-  -- --gridredraw()
 end
 
 function pattern_note(e)
