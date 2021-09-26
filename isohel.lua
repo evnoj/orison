@@ -14,9 +14,11 @@ local enc_control = 0
 pressed_notes = {}
 local held_notes = {}
 local holding = false
-local pattern_1_led_level = 8
-local pattern_2_led_level = 6
+local pattern_1_led_level = 3
+local pattern_2_led_level = 8
 local holding_led_pulse_level = 4
+local pattern1_timefactor = 1
+local pattern2_timefactor = 1
 
 local visual_refresh_rate = 30
 local screen_refresh_metro
@@ -49,6 +51,7 @@ local k1 = false
 local altkey = false
 local file = _path.dust.."audio/metro-tick.wav"
 local retriggertracker = 0
+local enc_control_timefactor = false
 
 local function grid_led_array_init()
   init_grid = {}
@@ -102,7 +105,7 @@ function init()
   params:add_option("enc1","enc1", {"shape","timbre","noise","cut","ampatk","amprel"}, 4)
   params:add_option("enc2","enc2", {"shape","timbre","noise","cut","ampatk","amprel"}, 5)
   params:add_option("enc3","enc3", {"shape","timbre","noise","cut","ampatk", "amprel"}, 6)
-  params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 1)
+  params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
 
   params:add_separator()
 
@@ -209,14 +212,14 @@ function g.key(x, y, z)
         pat2:rec_start()
       elseif y == 4 and pat2.rec == 0 and pat2.count == 0 then
         pat2:rec_start()
-      elseif y == 4 and pat2.rec == 2 then
+      elseif y == 4 and pat2.rec == 1 then
         pattern_rec_stop(2)
         if pat2.count > 0 then
           pat2:start()
         end
       elseif y == 4 and pat2.play == 0 and pat2.count > 0 then
         pat2:start()
-      elseif y == 4 and pat2.play == 2 then
+      elseif y == 4 and pat2.play == 1 then
         pat2:stop()
         clear_notes("pattern2")
       elseif y == 5 then
@@ -261,6 +264,7 @@ function g.key(x, y, z)
     e.y = grid_window.y - y + 1
     e.state = z
     e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 
+
     if z == 1 then
       if altkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
@@ -325,9 +329,9 @@ function lighting_update_handler()
   for x = 2,16,1 do
     for y = 1,8,1 do
       if grid_to_note_num(x,y) == 60 then
-        grid_led_set(x,y,8)
+        grid_led_set(x,y,7)
       elseif grid_to_note_num(x,y) % 12 == 0 then
-        grid_led_set(x,y,8)
+        grid_led_set(x,y,4)
       end
     end
   end
@@ -428,12 +432,25 @@ function pattern_rec_stop(n)
     p.x = e.x
     p.y = e.y
     p.state = 0
-    p.id = math.floor(e.id / 100) * 100 + sources.pattern1 * 10
 
-    pat1:watch(p)
+    if n == 1 then
+      p.id = math.floor(e.id / 100) * 100 + sources[pattern1] * 10
+    elseif n == 2 then
+      p.id = math.floor(e.id / 100) * 100 + sources[pattern2] * 10
+    end
+
+    if n == 1 then
+      pat1:watch(p)
+    elseif n == 2 then
+      pat2:watch(p)
+    end
   end
 
-  pat1:rec_stop()
+  if n == 1 then
+    pat1:rec_stop()
+  elseif n == 2 then
+    pat2:rec_stop()
+  end
 end
 
 function clear_notes(source)
@@ -476,6 +493,7 @@ function clear_notes(source)
         currently_playing[id] = nil
         e.state = 0
         matrix_note(e)
+        e.state = 1
       end
     end
   end
@@ -751,6 +769,12 @@ function enc(n,delta)
     elseif n == 3 then
       placeholder = 1
     end
+  elseif enc_control_timefactor and n == 2 then
+    pattern1_timefactor = util.clamp(pattern1_timefactor + delta / 100, .0001, 100)
+    pat1:set_time_factor(pattern1_timefactor)
+  elseif enc_control_timefactor and n == 3 then
+    pattern2_timefactor = util.clamp(pattern2_timefactor + delta / 100, .001, 100)
+    pat2:set_time_factor(pattern2_timefactor)
   elseif n == 1 then
     params:delta(params:string("enc1"), delta/2)
   elseif n == 2 then
@@ -773,6 +797,8 @@ function key(n,z)
     metrokey = true
   elseif n == 2 and z == 0 then
     metrokey = false
+  elseif n == 3 and z == 1 and k1 then
+    enc_control_timefactor = not enc_control_timefactor
   elseif n == 3 and z == 1 then
     enc_control = 1 - enc_control
     if enc_control == 0 then
