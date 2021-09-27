@@ -53,6 +53,9 @@ local file = _path.dust.."audio/metro-tick.wav"
 local retriggertracker = 0
 local enc_control_timefactor = false
 local patterns = {}
+local grid_metro_level = 0
+local grid_metro_flash = false
+local prev_time = 0
 
 local function grid_led_array_init()
   init_grid = {}
@@ -205,7 +208,7 @@ local function start_holding()
 end
 
 local function add_to_held(note)
-  note.pulser = create_mod_pulse(holding_led_pulse_level, .75, id, "rise")
+  note.pulser = create_mod_pulse(holding_led_pulse_level, .75, note.id, "rise")
 
   if holding then
     for id, e2 in pairs(held_notes) do
@@ -573,6 +576,16 @@ function lighting_update_handler()
       obj.frametrack = obj.frames_per_step
     end    
   end
+
+  for x=1,16 do
+    for y=1,8 do
+      grid_led_add(x,y,grid_metro_level)
+    end
+  end
+
+  grid_metro_level = util.clamp(grid_metro_level - 1, 0, 15)
+
+  gridredraw()
 end
 
 function grid_led_set(x, y, level)
@@ -889,7 +902,7 @@ function pattern_note(e)
 end
 
 function gridredraw()
-  g:all(0)
+  --g:all(0)
 
   for x=1,16 do 
     for y=1,8 do
@@ -957,6 +970,7 @@ function key(n,z)
       softcut.level(1, 0)
     end
   elseif n == 2 and z == 1 then
+    if altkey then grid_metro_flash = not grid_metro_flash end
     metrokey = true
   elseif n == 2 and z == 0 then
     metrokey = false
@@ -984,6 +998,10 @@ end
 function metronome()
   while true do
     clock.sync(divnum / divdenom)
+    if grid_metro_flash then
+      grid_metro_level = 4
+    end
+
     softcut.position(1,0)
     params:set("clock_tempo", bpm)
   end
