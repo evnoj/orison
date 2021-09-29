@@ -19,11 +19,12 @@ local pattern_2_led_level = 3
 local holding_led_pulse_level = 4
 local pattern1_timefactor = 1
 local pattern2_timefactor = 1
+clockids = {}
 
 local visual_refresh_rate = 30
 local screen_refresh_metro
 
-local MAX_NUM_VOICES = 16
+local MAX_NUM_VOICES = 100
 
 local options = {
   same_note_behavior = {"retrigger", "detuned", "ignore", "separate"}
@@ -48,7 +49,7 @@ local bpm = clock.get_tempo()
 local divnum = 1
 local divdenom = 1
 local k1 = false
-local altkey = false
+local ctrlkey = false
 local file = _path.dust.."audio/metro-tick.wav"
 local retriggertracker = 0
 local enc_control_timefactor = false
@@ -102,11 +103,15 @@ function init()
 
   pat1 = pattern_time.new()
   pat1.process = pattern_note
-  patterns[1] = pat1
+  patterns[1] = {}
+  patterns[1].pattern = pat1
+  patterns[1].sync = false
 
   pat2 = pattern_time.new()
   pat2.process = pattern_note
-  patterns[2] = pat2
+  patterns[2] = {}
+  patterns[2].pattern = pat2
+  patterns[2].sync = false
 
   params:add_option("enc1","enc1", {"shape","timbre","noise","cut","ampatk","amprel"}, 4)
   params:add_option("enc2","enc2", {"shape","timbre","noise","cut","ampatk","amprel"}, 5)
@@ -247,7 +252,40 @@ local function remove_from_held(id)
 end
 
 local function pattern_stop(n)
-  pattern = patterns[n]
+  pattern = patterns[n].pattern
+  pattern:stop()
+  clear_notes("pattern" .. n)
+
+  if n == 1 then
+    x = 1
+    y = 3
+  elseif n == 2 then
+    x = 1
+    y = 4
+  end
+  
+  if pattern.count == 0 then
+    grid_led[x][y].add = nil
+  else
+    grid_led[x][y].add = 2
+  end
+
+  clear_fixed_pulse(x,y)
+end
+
+function pattern_stop_sync(n)
+  print("pattern stop sync " .. n)
+
+  pattern = patterns[n].pattern
+  patterns[n].stoparm = true
+
+  if patterns[n].reset_clock_id ~= nil then
+    clock.cancel(patterns[n].reset_clock_id)
+  end
+
+  clock.sync(1)
+
+  patterns[n].stoparm = false
   pattern:stop()
   clear_notes("pattern" .. n)
 
@@ -269,10 +307,21 @@ local function pattern_stop(n)
 end
 
 local function pattern_record_start(n)
-  pattern = patterns[n]
+  pattern = patterns[n].pattern
+  patterns[n].sync = false
   pattern_stop(n)
   pattern:clear()
   pattern:rec_start()
+
+  for id, e in pairs(pressed_notes) do
+    p = {}
+    p.x = e.x
+    p.y = e.y
+    p.state = 1
+    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
+
+    pattern:watch(p)
+  end
 
   if n == 1 then
     x = 1
@@ -287,8 +336,51 @@ local function pattern_record_start(n)
   create_fixed_pulse(x,y,0,level,.9,"fall")
 end
 
+function pattern_record_start_sync(n)
+  patterns[n].sync = "clock"
+  pattern = patterns[n].pattern
+  pattern_stop(n)
+  pattern:clear()
+
+  if n == 1 then
+    x = 1
+    y = 3
+    level = pattern_1_led_level
+  elseif n == 2 then
+    x = 1
+    y = 4
+    level = pattern_2_led_level + 2
+  end
+
+  create_fixed_pulse(x,y,0,level,.3,"wave")
+
+  clock.sync(1)
+  
+  clear_fixed_pulse(x,y)
+  
+  pattern:rec_start()
+
+  s = {}
+  s.starter = true
+  pattern:watch(s) 
+
+  for id, e in pairs(pressed_notes) do
+    p = {}
+    p.x = e.x
+    p.y = e.y
+    p.state = 1
+    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
+
+    pattern:watch(p)
+  end
+
+  create_fixed_pulse(x,y,0,level,.9,"fall")
+  print("end")
+end
+
+
 local function pattern_record_stop(n)
-  pattern = patterns[n]
+  pattern = patterns[n].pattern
 
   for id, e in pairs(pressed_notes) do
     p = {}
@@ -320,7 +412,7 @@ local function pattern_record_stop(n)
 end
 
 local function pattern_start(n)
-  pattern = patterns[n]
+  pattern = patterns[n].pattern
 
   if pattern.count == 0 then
     return
@@ -343,8 +435,80 @@ local function pattern_start(n)
   create_fixed_pulse(x,y,0,level,.9,"rise")
 end
 
+function pattern_record_stop_sync(n)
+  pattern = patterns[n].pattern
+
+  s = {}
+  s.syncer = true
+  s.n = n
+  pattern:watch(s)
+  
+  clock.sync(1)
+
+  for id, e in pairs(pressed_notes) do
+    p = {}
+    p.x = e.x
+    p.y = e.y
+    p.state = 0
+    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
+
+    pattern:watch(p)
+  end
+
+  pattern:rec_stop()
+
+  if n == 1 then
+    x = 1
+    y = 3
+  elseif n == 2 then
+    x = 1
+    y = 4
+  end
+
+  if pattern.count == 0 then
+    grid_led[x][y].add = nil
+  else
+    grid_led[x][y].add = 2
+  end
+
+  clear_fixed_pulse(x,y)
+
+  if pattern.count == 2 then
+    pattern_clear(n)
+    return
+  end
+
+  pattern_start(n)
+end
+
+function pattern_start_sync(n)
+  pattern = patterns[n].pattern
+
+  if pattern.count == 0 then
+    return
+  end
+
+  clock.sync(1)
+
+  pattern_start(n)
+end
+
+function pattern_reset_sync(n)
+  pattern = patterns[n].pattern
+
+  if pattern.count == 0 then
+    return
+  end
+
+  clock.sync(1)
+
+  pattern_stop(n)
+  patterns[n].reset_clock_id = nil
+  pattern_start(n)
+end
+
 local function pattern_clear(n)
-  pattern = patterns[n]
+  pattern = patterns[n].pattern
 
   if pattern.play == 1 then
     pattern_stop(n)
@@ -367,13 +531,13 @@ function g.key(x, y, z)
   grid_presses[x][y] = z
   if x == 1 then
     if z == 1 then
-      if y == 8 and not holding and not altkey then
+      if y == 8 and not holding and not ctrlkey then
         for id, e in pairs(pressed_notes) do
           add_to_held(e)
         end
-      elseif y == 8 and holding and not altkey then
+      elseif y == 8 and holding and not ctrlkey then
         stop_holding()
-      elseif y == 8 and altkey then
+      elseif y == 8 and ctrlkey then
         for id, e in pairs(pressed_notes) do
           if held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
             add_to_held(e)
@@ -381,38 +545,33 @@ function g.key(x, y, z)
             remove_from_held(math.floor(id / 100) * 100 + 10 * sources.pressed)
           end
         end
-      elseif y == 3 and altkey then
-        pattern_stop(1)
-        pattern_clear(1)
-        pattern_record_start(1)
-      elseif y == 3 and pat1.rec == 0 and pat1.count == 0 then
-        pattern_record_start(1)
-      elseif y == 3 and pat1.rec == 1 then
-        pattern_record_stop(1)
-        if pat1.count > 0 then
-          pattern_start(1)
+      elseif y == 3 or y == 4 then
+        n = y - 2
+        pattern = patterns[n].pattern
+        if ctrlkey then
+          pattern_stop(n)
+          pattern_clear(n)
+          pattern_record_start(n)
+        elseif altkey then
+          pattern_stop(n)
+          pattern_clear(n)
+          clock.run(pattern_record_start_sync, n)
+        elseif pattern.rec == 0 and pattern.count == 0 then
+          pattern_record_start(n)
+        elseif pattern.rec == 1 and patterns[n].sync == "clock" then
+          clock.run(pattern_record_stop_sync, n)
+        elseif pattern.rec == 1 and patterns[n].sync == false then
+          pattern_record_stop(n)
+          pattern_start(n)
+        elseif pattern.play == 0 and patterns[n].sync == "clock" then
+          clock.run(pattern_start_sync, n)
+        elseif pattern.play == 0 and patterns[n].sync == false then
+          pattern_start(n)
+        elseif pattern.play == 1 and patterns[n].sync == "clock" then
+          clock.run(pattern_stop_sync, n)
+        elseif pattern.play == 1 and patterns[n].sync == false then
+          pattern_stop(n)
         end
-      elseif y == 3 and pat1.play == 0 and pat1.count > 0 then
-        pattern_start(1)
-      elseif y == 3 and pat1.play == 1 then
-        pattern_stop(1)
-      elseif y == 4 and altkey then
-        pattern_stop(2)
-        pattern_clear(2)
-        pattern_record_start(2)
-      elseif y == 4 and pat2.rec == 0 and pat2.count == 0 then
-        pattern_record_start(2)
-      elseif y == 4 and pat2.rec == 1 then
-        pattern_record_stop(2)
-        if pat2.count > 0 then
-          pattern_start(2)
-        end
-      elseif y == 4 and pat2.play == 0 and pat2.count > 0 then
-        pattern_start(2)
-      elseif y == 4 and pat2.play == 1 then
-        pattern_stop(2)
-      elseif y == 5 then
-        mode_transpose = 1 - mode_transpose
       elseif y == 1 then
         grid_window.y = grid_window.y + 1
 
@@ -425,12 +584,16 @@ function g.key(x, y, z)
         for id, e in pairs(pressed_notes) do
           e.y_transpose_since_press = e.y_transpose_since_press - 1
         end
-      elseif y == 7 then
+      elseif y == 6 then
         altkey = true
+      elseif y == 7 then
+        ctrlkey = true
       end
     elseif z == 0 then
-      if y == 7 then
+      if y == 6 then
         altkey = false
+      elseif y == 7 then
+        ctrlkey = false
       end
     end
   else
@@ -455,7 +618,7 @@ function g.key(x, y, z)
     e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 
 
     if z == 1 then
-      if altkey and grid_presses[1][8] == 1 then
+      if ctrlkey and grid_presses[1][8] == 1 then
         if held_notes[e.id] ~= nil then
           remove_from_held(e.id)
         else
@@ -483,6 +646,15 @@ function g.key(x, y, z)
   end
   --gridredraw()
 end
+
+function forid(id)
+  if clockids[id] == nil then
+    clockids[id] = true
+  else
+    print("clock id already exists")
+  end
+end
+
 
 local function note_id_to_info(id)
   id = id .. ""
@@ -624,33 +796,6 @@ local function stop_note(id)
   if params:get("output") == 1 then
     engine.stop(id)
   end      
-end
-
-function pattern_rec_stop(n)
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 0
-
-    if n == 1 then
-      p.id = math.floor(e.id / 100) * 100 + sources[pattern1] * 10
-    elseif n == 2 then
-      p.id = math.floor(e.id / 100) * 100 + sources[pattern2] * 10
-    end
-
-    if n == 1 then
-      pat1:watch(p)
-    elseif n == 2 then
-      pat2:watch(p)
-    end
-  end
-
-  if n == 1 then
-    pat1:rec_stop()
-  elseif n == 2 then
-    pat2:rec_stop()
-  end
 end
 
 function clear_notes(source)
@@ -825,6 +970,18 @@ function matrix_note(e)
 end
 
 function pattern_note(e)
+  if e.starter == true then
+    return
+  elseif e.syncer then
+    n = e.n
+
+    print("encountered syncer event for pattern " .. n)
+    if patterns[n].stoparm ~= true then
+      patterns[n].reset_clock_id = clock.run(pattern_reset_sync, n)
+    end
+    return
+  end
+
   local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
     if nvoices < MAX_NUM_VOICES then
@@ -908,9 +1065,9 @@ function gridredraw()
     for y=1,8 do
       if true then
       --if grid_led[x][y].dirty then
-        if grid_led[x][y].add ~= nil then
-          grid_led_add(x, y, grid_led[x][y].add)
-        end
+      if grid_led[x][y].add ~= nil then
+        grid_led_add(x, y, grid_led[x][y].add)
+      end
       g:led(x,y,grid_led[x][y].level)
     end
   end
@@ -970,7 +1127,7 @@ function key(n,z)
       softcut.level(1, 0)
     end
   elseif n == 2 and z == 1 then
-    if altkey then grid_metro_flash = not grid_metro_flash end
+    if ctrlkey then grid_metro_flash = not grid_metro_flash end
     metrokey = true
   elseif n == 2 and z == 0 then
     metrokey = false
