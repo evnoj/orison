@@ -226,13 +226,19 @@ function init()
   grid_led = grid_led_array_init()
   grid_presses = grid_press_array_init()
 
-  screengrid_refresh_metro = metro.init()
-  screengrid_refresh_metro.event = function(stage)
+  grid_refresh_metro = metro.init()
+  grid_refresh_metro.event = function(stage)
     lighting_update_handler()
-    redraw()
     gridredraw()
   end
-  screengrid_refresh_metro:start(1 / visual_refresh_rate)
+  grid_refresh_metro:start(1 / visual_refresh_rate)
+
+  screen_refresh_metro = metro.init()
+  screen_refresh_metro.event = function(stage)
+    redraw()
+  end
+  screen_refresh_metro:start(1/120)
+
   metroid = clock.run(metronome)
   
   
