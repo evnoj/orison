@@ -129,14 +129,21 @@ function init()
   params:add_option("enc2","enc2", enc_control_options, 5)
   params:add_option("enc3","enc3", enc_control_options, 6)
   params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
-  params:add_number("pat1tf","pattern1 timef",0.0001,1000,1)
+  tf_control = controlspec.new(.01,100,'exp',.01,1,'x time',0.0001,false)
+  params:add_control("pat1tf","pattern1 timef",tf_control)
   params:add_number("pat2tf","pattern2 timef",0.0001,1000,1)
   params:add_number("pat1synctfn","pattern 1 sync numer",1,64,1)
   params:add_number("pat1synctfd","pattern 1 sync denom",1,64,1)
   params:add_number("pat2synctfn","pattern 2 sync numer",1,64,1)
   params:add_number("pat2synctfd","pattern 2 sync denom",1,64,1)
+  --params:hide("pat1tf")
+  params:hide("pat2tf")
+  params:hide("pat1synctfn")
+  params:hide("pat1synctfd")
+  params:hide("pat2synctfn")
+  params:hide("pat2synctfd")
   params:set_action("clock_tempo", function(tempo)
-    bpm = tempo
+    --bpm = tempo
     if pattern1_sync == "clock" then
       if pat1.rec == 1 then
         pattern_record_stop(1)
@@ -1724,19 +1731,34 @@ function redraw()
   else
     screen.level(4)
   end
-  screen.move(64,14)
+  screen.move(64,16)
   if pattern1_sync == false then
     screen.text("p1 tf: " .. params:get("pat1tf"))
   elseif pattern1_sync == "clock" then
     screen.text("p1 tf: " .. params:get("pat1synctfn") .. " / " .. params:get("pat1synctfd"))
   end
 
-  screen.move(64,23)
+  screen.move(64,25)
   if pattern2_sync == false then
     screen.text("p2 tf: " .. params:get("pat2tf"))
   elseif pattern2_sync == "clock" then
     screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
-  end  
+  end 
+
+  --draw metronome visualizer
+  screen.level(14)
+  screen.move(88,4)
+  screen.line_width(1)
+  screen.line(108,4)
+  screen.move(108,0)
+  screen.line(108,7)
+  screen.stroke()
+
+  current_beat_offset = clock.get_beats() % 1
+  screen.move(88 + current_beat_offset * 20, 0)
+  screen.line(88 + current_beat_offset * 20, 7)
+  -- screen.move(107 + current_beat_offset * 19,0)
+  -- screen.line(107 + current_beat_offset * 19,7)
   
   screen.update()
 end
