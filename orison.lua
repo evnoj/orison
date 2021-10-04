@@ -143,24 +143,25 @@ function init()
   params:hide("pat2synctfn")
   params:hide("pat2synctfd")
   params:set_action("clock_tempo", function(tempo)
-    --bpm = tempo
-    if pattern1_sync == "clock" then
-      if pat1.rec == 1 then
-        pattern_record_stop(1)
-        pattern_clear(1)
-      else
-        params:set("pat1tf",(pattern1_basebpm / tempo) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-      end
-    end
+    print(tempo)
+    -- bpm = tempo
+    -- if pattern1_sync == "clock" then
+    --   if pat1.rec == 1 then
+    --     pattern_record_stop(1)
+    --     pattern_clear(1)
+    --   else
+    --     params:set("pat1tf",(pattern1_basebpm / tempo) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+    --   end
+    -- end
 
-    if pattern2_sync == "clock" then
-      if pat2.rec == 1 then
-        pattern_record_stop(2)
-        pattern_clear(2)
-      else
-        params:set("pat2tf",(pattern2_basebpm / tempo) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-      end
-    end
+    -- if pattern2_sync == "clock" then
+    --   if pat2.rec == 1 then
+    --     pattern_record_stop(2)
+    --     pattern_clear(2)
+    --   else
+    --     params:set("pat2tf",(pattern2_basebpm / tempo) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+    --   end
+    -- end
     end)
 
   params:set_action("pat1tf", function(tf)
@@ -203,7 +204,7 @@ function init()
     end
   end)
 
-  params:set_action("pat2synctfn", function(n)
+  params:set_action("pat2synctfd", function(n)
     if pattern2_sync == "clock" then
       params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
       if reset_clock_id2 ~= nil then
@@ -237,7 +238,7 @@ function init()
   screen_refresh_metro.event = function(stage)
     redraw()
   end
-  screen_refresh_metro:start(1/120)
+  screen_refresh_metro:start(1/60)
 
   metroid = clock.run(metronome)
   
@@ -1755,16 +1756,22 @@ function redraw()
   screen.level(14)
   screen.move(88,4)
   screen.line_width(1)
-  screen.line(108,4)
-  screen.move(108,0)
-  screen.line(108,7)
+  screen.line(112,4)
   screen.stroke()
 
   current_beat_offset = clock.get_beats() % 1
-  screen.move(88 + current_beat_offset * 20, 0)
-  screen.line(88 + current_beat_offset * 20, 7)
+  --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
+  screen.level(15)
+  screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
+  screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
   -- screen.move(107 + current_beat_offset * 19,0)
   -- screen.line(107 + current_beat_offset * 19,7)
+  screen.stroke()
+
+  screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
+  screen.rect(111,0,7,7)
+  screen.fill()
+
   
   screen.update()
 end
