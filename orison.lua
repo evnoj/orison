@@ -41,7 +41,7 @@ local sources = {pressed = 1,
   pattern1 = 2,
   pattern2 = 3}
 
-engine.name = 'PolySub'
+  engine.name = 'PolySub'
 
 -- current count of active voices
 local nvoices = 0
@@ -109,6 +109,32 @@ local function note_hasher(x,y)
   return y*40 + x
 end
 
+function tempo_watcher()
+  while true do
+    if bpm ~= clock.get_tempo() then
+      bpm = clock.get_tempo()
+      if pattern1_sync == "clock" then
+        if pat1.rec == 1 then
+          pattern_record_stop(1)
+          pattern_clear(1)
+        else
+          params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+        end
+      end
+
+      if pattern2_sync == "clock" then
+        if pat2.rec == 1 then
+          pattern_record_stop(2)
+          pattern_clear(2)
+        else
+          params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+        end
+      end
+    end
+    clock.sleep(1/60)
+  end
+end
+
 function init()
   m = midi.connect()
   m.event = midi_event
@@ -129,40 +155,20 @@ function init()
   params:add_option("enc2","enc2", enc_control_options, 5)
   params:add_option("enc3","enc3", enc_control_options, 6)
   params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
-  tf_control = controlspec.new(.01,100,'exp',.01,1,'x time',0.0001,false)
+  tf_control = controlspec.new(.01,100,'lin',.01,1,'x time',0.0001,false)
   params:add_control("pat1tf","pattern1 timef",tf_control)
-  params:add_number("pat2tf","pattern2 timef",0.0001,1000,1)
-  params:add_number("pat1synctfn","pattern 1 sync numer",1,64,1)
-  params:add_number("pat1synctfd","pattern 1 sync denom",1,64,1)
-  params:add_number("pat2synctfn","pattern 2 sync numer",1,64,1)
-  params:add_number("pat2synctfd","pattern 2 sync denom",1,64,1)
-  --params:hide("pat1tf")
+  params:add_control("pat2tf","pattern2 timef",tf_control)
+  tf_mult_control = controlspec.new(1,64,'lin',1,1)
+  params:add_control("pat1synctfn","pattern 1 sync numer",tf_mult_control)
+  params:add_control("pat1synctfd","pattern 1 sync denom",tf_mult_control)
+  params:add_control("pat2synctfn","pattern 2 sync numer",tf_mult_control)
+  params:add_control("pat2synctfd","pattern 2 sync denom",tf_mult_control)
+  params:hide("pat1tf")
   params:hide("pat2tf")
   params:hide("pat1synctfn")
   params:hide("pat1synctfd")
   params:hide("pat2synctfn")
   params:hide("pat2synctfd")
-  params:set_action("clock_tempo", function(tempo)
-    print(tempo)
-    bpm = tempo
-    if pattern1_sync == "clock" then
-      if pat1.rec == 1 then
-        pattern_record_stop(1)
-        pattern_clear(1)
-      else
-        params:set("pat1tf",(pattern1_basebpm / tempo) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-      end
-    end
-
-    if pattern2_sync == "clock" then
-      if pat2.rec == 1 then
-        pattern_record_stop(2)
-        pattern_clear(2)
-      else
-        params:set("pat2tf",(pattern2_basebpm / tempo) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-      end
-    end
-    end)
 
   params:set_action("pat1tf", function(tf)
     pat1:set_time_factor(tf)
@@ -181,7 +187,7 @@ function init()
         reset_clock_id1 = nil
       end
     end
-  end)
+    end)
 
   params:set_action("pat1synctfd", function(n)
     if pattern1_sync == "clock" then
@@ -192,7 +198,7 @@ function init()
         reset_clock_id1 = nil
       end
     end
-  end)
+    end)
 
   params:set_action("pat2synctfn", function(n)
     if pattern2_sync == "clock" then
@@ -202,7 +208,7 @@ function init()
         reset_clock_id2 = clock.run(pattern2_reset_sync)
       end
     end
-  end)
+    end)
 
   params:set_action("pat2synctfd", function(n)
     if pattern2_sync == "clock" then
@@ -212,7 +218,7 @@ function init()
         reset_clock_id2 = clock.run(pattern2_reset_sync)
       end
     end
-  end)
+    end)
 
   params:add_separator()
 
@@ -241,6 +247,7 @@ function init()
   screen_refresh_metro:start(1/60)
 
   metroid = clock.run(metronome)
+  tempo_watch_id = clock.run(tempo_watcher)
   
   
   softcut.buffer_clear()
@@ -1570,6 +1577,25 @@ function enc(n,delta)
   elseif metrokey then
     if n == 1 then
       bpm = util.clamp(bpm + delta, 1, 300)
+      params:set("clock_tempo", bpm)
+
+      if pattern1_sync == "clock" then
+        if pat1.rec == 1 then
+          pattern_record_stop(1)
+          pattern_clear(1)
+        else
+          params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+        end
+      end
+
+      if pattern2_sync == "clock" then
+        if pat2.rec == 1 then
+          pattern_record_stop(2)
+          pattern_clear(2)
+        else
+          params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+        end
+      end
     elseif n == 2 then
       divnum = util.clamp(divnum + delta, 1, 1000000)
     elseif n == 3 then
@@ -1690,7 +1716,6 @@ function metronome()
     end
 
     softcut.position(1,0)
-    params:set("clock_tempo", bpm)
   end
 end
 
@@ -1752,24 +1777,28 @@ function redraw()
     screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
   end 
 
-  --draw metronome visualizer
-  screen.level(14)
-  screen.move(88,4)
-  screen.line_width(1)
-  screen.line(112,4)
-  screen.stroke()
+  -- --draw metronome visualizer
+  -- screen.level(14)
+  -- screen.move(88,4)
+  -- screen.line_width(1)
+  -- screen.line(112,4)
+  -- screen.stroke()
 
   current_beat_offset = clock.get_beats() % 1
-  --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
-  screen.level(15)
-  screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
-  screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
-  -- screen.move(107 + current_beat_offset * 19,0)
-  -- screen.line(107 + current_beat_offset * 19,7)
-  screen.stroke()
+  -- --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
+  -- screen.level(15)
+  -- screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
+  -- screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
+  -- -- screen.move(107 + current_beat_offset * 19,0)
+  -- -- screen.line(107 + current_beat_offset * 19,7)
+  -- screen.stroke()
 
-  screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
-  screen.rect(111,0,7,7)
+  -- screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
+  -- screen.rect(111,0,7,7)
+  -- screen.fill()
+
+  screen.level(math.floor((1 - current_beat_offset)^2 * 14))
+  screen.circle(114,7,4)
   screen.fill()
 
   
