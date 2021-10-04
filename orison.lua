@@ -41,7 +41,7 @@ local sources = {pressed = 1,
   pattern1 = 2,
   pattern2 = 3}
 
-  engine.name = 'PolySub'
+engine.name = 'PolySub'
 
 -- current count of active voices
 local nvoices = 0
@@ -144,24 +144,24 @@ function init()
   params:hide("pat2synctfd")
   params:set_action("clock_tempo", function(tempo)
     print(tempo)
-    -- bpm = tempo
-    -- if pattern1_sync == "clock" then
-    --   if pat1.rec == 1 then
-    --     pattern_record_stop(1)
-    --     pattern_clear(1)
-    --   else
-    --     params:set("pat1tf",(pattern1_basebpm / tempo) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-    --   end
-    -- end
+    bpm = tempo
+    if pattern1_sync == "clock" then
+      if pat1.rec == 1 then
+        pattern_record_stop(1)
+        pattern_clear(1)
+      else
+        params:set("pat1tf",(pattern1_basebpm / tempo) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+      end
+    end
 
-    -- if pattern2_sync == "clock" then
-    --   if pat2.rec == 1 then
-    --     pattern_record_stop(2)
-    --     pattern_clear(2)
-    --   else
-    --     params:set("pat2tf",(pattern2_basebpm / tempo) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-    --   end
-    -- end
+    if pattern2_sync == "clock" then
+      if pat2.rec == 1 then
+        pattern_record_stop(2)
+        pattern_clear(2)
+      else
+        params:set("pat2tf",(pattern2_basebpm / tempo) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+      end
+    end
     end)
 
   params:set_action("pat1tf", function(tf)
