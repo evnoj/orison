@@ -71,7 +71,10 @@ local grid_metro_level = 0
 local grid_metro_flash = false
 local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1tf","pat1synctfn","pat1synctfd","pat2tf","pat2synctfn","pat2synctfd","clock_tempo"}
 
-local function grid_led_array_init()
+-- forward declare functions
+local pattern_record_start, pattern_record_start_sync, pattern_record_stop, pattern_clear,pattern_record_start_sync,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,stop_note,matrix_coord_to_note_num,pattern_stop_sync,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern_record_stop,pattern_record_stop_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern_start_sync,pattern1_start_sync,pattern2_start_sync,pattern_reset_sync,pattern1_reset_sync,pattern2_reset_sync,pattern_clear,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
+
+grid_led_array_init = function()
   init_grid = {}
 
   for x=1,16 do
@@ -84,7 +87,7 @@ local function grid_led_array_init()
   return init_grid
 end
 
-local function grid_press_array_init()
+grid_press_array_init = function()
   init_grid = {}
 
   for x=1,16 do
@@ -97,7 +100,7 @@ local function grid_press_array_init()
   return init_grid
 end
 
-local function grid_led_clear()
+grid_led_clear = function()
   for x=1,16 do
     for y=1,8 do
       grid_led[x][y].level = 0
@@ -106,11 +109,11 @@ local function grid_led_clear()
   end
 end
 
-local function note_hasher(x,y)
+note_hasher = function(x,y)
   return y*40 + x
 end
 
-function tempo_change_handler(tempo)
+tempo_change_handler = function(tempo)
   if bpm ~= tempo then
     bpm = tempo
     if pattern1_sync == "clock" then
@@ -133,7 +136,7 @@ function tempo_change_handler(tempo)
   end
 end
 
-local function create_fixed_pulse(x, y, pmin, pmax, rate, shape)
+create_fixed_pulse = function(x, y, pmin, pmax, rate, shape)
   pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed", shape = shape}
 
   if shape == "wave" then
@@ -154,13 +157,12 @@ local function create_fixed_pulse(x, y, pmin, pmax, rate, shape)
   return pulse
 end
 
-local function clear_fixed_pulse(x, y)
+clear_fixed_pulse = function(x, y)
   id = y*16 + x
   lighting_over_time.fixed[id] = nil
 end
 
-
-local function create_mod_pulse(range, rate, note_id, shape)
+create_mod_pulse = function(range, rate, note_id, shape)
   pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
 
   if shape == "wave" then
@@ -180,7 +182,7 @@ local function create_mod_pulse(range, rate, note_id, shape)
   return pulse
 end
 
-local function start_holding()
+start_holding = function()
   if holding then
     return
   end
@@ -189,7 +191,7 @@ local function start_holding()
   holding = true
 end
 
-local function add_to_held(note)
+add_to_held = function(note)
   note.pulser = create_mod_pulse(holding_led_pulse_level, .75, note.id, "rise")
 
   if holding then
@@ -205,7 +207,7 @@ local function add_to_held(note)
   start_holding()
 end
 
-local function stop_holding()
+stop_holding = function()
   for id in pairs(held_notes) do
     e = held_notes[id]
     e.state = 0
@@ -217,7 +219,7 @@ local function stop_holding()
   holding = false
 end
 
-local function remove_from_held(id)
+remove_from_held = function(id)
   e = held_notes[id]
   e.state = 0
   held_notes[id] = nil
@@ -228,7 +230,7 @@ local function remove_from_held(id)
   end
 end
 
-local function pattern_stop(n)
+pattern_stop = function(n)
   pattern = patterns[n].pattern
   pattern:stop()
   clear_notes("pattern" .. n)
@@ -250,7 +252,7 @@ local function pattern_stop(n)
   clear_fixed_pulse(x,y)
 end
 
-function pattern_stop_sync(n)
+pattern_stop_sync = function(n)
   print("pattern stop sync " .. n)
 
   --pattern = patterns[n].pattern
@@ -300,7 +302,7 @@ function pattern_stop_sync(n)
   clear_fixed_pulse(x,y)
 end
 
-function pattern1_stop_sync(n)
+pattern1_stop_sync = function(n)
   stoparm1 = true
 
   if reset_clock_id1 ~= nil then
@@ -326,7 +328,7 @@ function pattern1_stop_sync(n)
   clear_fixed_pulse(x,y)
 end
 
-function pattern2_stop_sync(n)
+pattern2_stop_sync = function(n)
   stoparm2 = true
 
   if reset_clock_id2 ~= nil then
@@ -352,7 +354,7 @@ function pattern2_stop_sync(n)
   clear_fixed_pulse(x,y)
 end
 
-local function pattern_record_start(n)
+pattern_record_start = function (n)
   pattern = patterns[n].pattern
 
   if n == 1 then
@@ -391,7 +393,7 @@ local function pattern_record_start(n)
   create_fixed_pulse(x,y,0,level,.9,"fall")
 end
 
-function pattern_record_start_sync(n)
+pattern_record_start_sync = function(n)
   print("pattern rec start sync" .. n)
   --pattern = patterns[n].pattern
   if n == 1 then
@@ -442,7 +444,7 @@ function pattern_record_start_sync(n)
   create_fixed_pulse(x,y,0,level,.9,"fall")
 end
 
-function pattern1_record_start_sync()
+pattern1_record_start_sync = function()
   pattern1_sync = "clock"
   pattern_stop(n)
   pat1:clear()
@@ -477,7 +479,7 @@ function pattern1_record_start_sync()
   create_fixed_pulse(x,y,0,level,.9,"fall")
 end
 
-function pattern2_record_start_sync()
+pattern2_record_start_sync = function()
   pattern2_sync = "clock"
   pattern_stop(n)
   pat2:clear()
@@ -512,8 +514,7 @@ function pattern2_record_start_sync()
   create_fixed_pulse(x,y,0,level,.9,"fall")
 end
 
-
-function pattern_record_stop(n)
+pattern_record_stop = function(n)
   pattern = patterns[n].pattern
 
   for id, e in pairs(pressed_notes) do
@@ -551,7 +552,7 @@ function pattern_record_stop(n)
   clear_fixed_pulse(x,y)
 end
 
-local function pattern_start(n)
+pattern_start = function(n)
   pattern = patterns[n].pattern
 
   if pattern.count == 0 then
@@ -575,7 +576,7 @@ local function pattern_start(n)
   create_fixed_pulse(x,y,0,level,.9,"rise")
 end
 
-function pattern_record_stop_sync(n)
+pattern_record_stop_sync = function(n)
   print("pattern rec stop sync " .. n)
   --pattern = patterns[n].pattern
   if n == 1 then
@@ -629,7 +630,7 @@ function pattern_record_stop_sync(n)
   pattern_start(n)
 end
 
-function pattern1_record_stop_sync(n)
+pattern1_record_stop_sync = function(n)
   s = {}
   s.syncer = true
   s.n = 1
@@ -672,7 +673,7 @@ function pattern1_record_stop_sync(n)
   pattern_start(1)
 end
 
-function pattern2_record_stop_sync(n)
+pattern2_record_stop_sync = function(n)
   s = {}
   s.syncer = true
   s.n = 2
@@ -715,7 +716,7 @@ function pattern2_record_stop_sync(n)
   pattern_start(2)
 end
 
-function pattern_start_sync(n)
+pattern_start_sync = function(n)
   print("pattern start sync " .. n)
   --pattern = patterns[n].pattern
   if n == 1 then
@@ -735,7 +736,7 @@ function pattern_start_sync(n)
   pattern_start(n)
 end
 
-function pattern1_start_sync(n)
+pattern1_start_sync = function(n)
   if pat1.count == 0 then
     return
   end
@@ -745,7 +746,7 @@ function pattern1_start_sync(n)
   pattern_start(1)
 end
 
-function pattern2_start_sync(n)
+pattern2_start_sync = function(n)
   if pat2.count == 0 then
     return
   end
@@ -755,7 +756,7 @@ function pattern2_start_sync(n)
   pattern_start(2)
 end
 
-function pattern_reset_sync(n)
+pattern_reset_sync = function(n)
   print("pattern reset sync" .. n)
   --pattern = patterns[n].pattern
   if n == 1 then
@@ -785,7 +786,7 @@ function pattern_reset_sync(n)
   pattern_start(n)
 end
 
-function pattern1_reset_sync()
+pattern1_reset_sync = function()
   if pat1.count == 0 then
     return
   end
@@ -799,7 +800,7 @@ function pattern1_reset_sync()
   pattern_start(1)
 end
 
-function pattern2_reset_sync()
+pattern2_reset_sync = function()
   if pat2.count == 0 then
     return
   end
@@ -813,7 +814,7 @@ function pattern2_reset_sync()
   pattern_start(2)
 end
 
-function pattern_clear(n)
+pattern_clear = function(n)
   pattern = patterns[n].pattern
 
   if pattern.play == 1 then
@@ -995,7 +996,7 @@ function g.key(x, y, z)
   --gridredraw()
 end
 
-local function note_id_to_info(id)
+note_id_to_info = function(id)
   id = id .. ""
   note_hash = id:sub(1,-3)
   y = math.floor(note_hash/40)
@@ -1003,7 +1004,7 @@ local function note_id_to_info(id)
   return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
 end
 
-function lighting_update_handler()
+lighting_update_handler = function()
   grid_led_clear()
 
   -- light c notes
@@ -1098,7 +1099,7 @@ function lighting_update_handler()
   gridredraw()
 end
 
-function grid_led_set(x, y, level)
+grid_led_set = function(x, y, level)
   level = util.clamp(level,0,15)
 
   if x < 1 or x > 16 or y < 1 or y > 8 or level == grid_led[x][y].level then
@@ -1109,7 +1110,7 @@ function grid_led_set(x, y, level)
   end
 end
 
-function grid_led_add(x, y, val)
+grid_led_add = function(x, y, val)
   if val == 0 or x < 1 or x > 16 or y < 1 or y > 8 then
     return
   end
@@ -1125,18 +1126,18 @@ function grid_led_add(x, y, val)
   end
 end
 
-local function start_note(id, note, detune)
+start_note = function(id, note, detune)
   detune = detune or 0
   engine.start(id, music.note_num_to_freq(note) + detune)
 end
 
-local function stop_note(id)
+stop_note = function(id)
   if params:get("output") == 1 then
     engine.stop(id)
   end
 end
 
-function clear_notes(source)
+clear_notes = function(source)
   source = source or "all"
 
   if source == "all" then
@@ -1181,22 +1182,22 @@ function clear_notes(source)
   end
 end
 
-function get_digit(num, digit)
+get_digit = function(num, digit)
   local n = 10 ^ digit
   local n1 = 10 ^ (digit - 1)
   return math.floor((num % n) / n1)
 end
 
-function grid_to_note_num(x,y)
+grid_to_note_num = function(x,y)
   note_num = (grid_window.y - y + 1)*5 + grid_window.x + x - 2
   return note_num
 end
 
-local function matrix_coord_to_note_num(x,y)
+matrix_coord_to_note_num = function(x,y)
   return x + y*row_interval
 end
 
-function table_size(table)
+table_size = function(table)
   count = 0
   for key, val in pairs(table) do 
     print("key: " .. key .. " val: " .. val.id)
@@ -1206,13 +1207,7 @@ function table_size(table)
   return count
 end
 
-function print_table_elements(table)
-  for key, val in pairs(table) do
-    print("key: " .. key .. " val: " .. val.id)
-  end
-end
-
-function matrix_note(e)
+matrix_note = function(e)
   local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
     if nvoices < MAX_NUM_VOICES then
@@ -1293,7 +1288,7 @@ function matrix_note(e)
   end
 end
 
-function pattern_note(e)
+pattern_note = function(e)
   if e.starter == true then
     return
   elseif e.syncer then
@@ -1390,7 +1385,7 @@ function pattern_note(e)
   end
 end
 
-function gridredraw()
+gridredraw = function()
   --g:all(0)
 
   for x=1,16 do 
@@ -1500,7 +1495,6 @@ function key(n,z)
       params:set("enc2",1)
       params:set("enc3",2)
     elseif enc_control == 2 then
-      --map_knobs_to_timef_ctrl()
       if pattern1_sync == false then
         params:set("enc2",7)
       elseif pattern1_sync == "clock" then
@@ -1529,29 +1523,7 @@ function key(n,z)
   redraw()
 end
 
-function map_knobs_to_timef_ctrl()
-  if pattern1_sync == false then
-    params:set("enc2",7)
-  elseif pattern1_sync == "clock" then
-    params:set("enc2",9)
-    params:set("enc1",8)
-  end
-
-  if pattern2_sync == false then
-    params:set("enc3",10)
-  elseif pattern2_sync == "clock" then
-    params:set("enc3",12)
-    if pattern1_sync ~= "clock" then
-      params:set("enc1",11)
-    end
-  end
-
-  if pattern1_sync == false and pattern1_sync == false then
-    params:set("enc1",13)
-  end
-end
-
-function metronome()
+metronome = function()
   while true do
     clock.sync(divnum / divdenom)
     if grid_metro_flash then
@@ -1644,23 +1616,7 @@ function redraw()
   screen.circle(114,7,4)
   screen.fill()
 
-
   screen.update()
-end
-
-function note_on(note, vel)
-  if nvoices < MAX_NUM_VOICES then
-    engine.start(note, music.note_num_to_freq(note))
-    start_screen_note(note)
-    nvoices = nvoices + 1
-  end
-end
-
-function note_off(note, vel)
-  engine.stop(note)
-  print('hey')
-  stop_screen_note(note)
-  nvoices = nvoices - 1
 end
 
 function init()
@@ -1795,11 +1751,7 @@ function init()
   softcut.play(1,1)
 end
 
-function r()
-  rerun()
-end
-
-function rerun()
+function reload()
   norns.script.load(norns.state.script)
 end
 
