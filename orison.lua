@@ -28,7 +28,7 @@ local pattern2_synctf_num = 1
 local pattern2_synctf_denom = 1
 clockids = {}
 
-local visual_refresh_rate = 30
+local visual_refresh_rate = 120
 local screen_refresh_metro
 
 local MAX_NUM_VOICES = 100
@@ -137,9 +137,6 @@ function tempo_watcher()
 end
 
 function init()
-  m = midi.connect()
-  m.event = midi_event
-
   pat1 = pattern_time.new()
   pat1.process = pattern_note
   patterns[1] = {}
@@ -173,11 +170,11 @@ function init()
 
   params:set_action("pat1tf", function(tf)
     pat1:set_time_factor(tf)
-    end)
+  end)
 
   params:set_action("pat2tf", function(tf)
     pat2:set_time_factor(tf)
-    end)
+  end)
 
   params:set_action("pat1synctfn", function(n)
     if pattern1_sync == "clock" then
@@ -188,7 +185,7 @@ function init()
         reset_clock_id1 = nil
       end
     end
-    end)
+  end)
 
   params:set_action("pat1synctfd", function(n)
     if pattern1_sync == "clock" then
@@ -199,7 +196,7 @@ function init()
         reset_clock_id1 = nil
       end
     end
-    end)
+  end)
 
   params:set_action("pat2synctfn", function(n)
     if pattern2_sync == "clock" then
@@ -209,7 +206,7 @@ function init()
         reset_clock_id2 = clock.run(pattern2_reset_sync)
       end
     end
-    end)
+  end)
 
   params:set_action("pat2synctfd", function(n)
     if pattern2_sync == "clock" then
@@ -219,7 +216,7 @@ function init()
         reset_clock_id2 = clock.run(pattern2_reset_sync)
       end
     end
-    end)
+  end)
 
   params:add_separator()
 
@@ -1128,15 +1125,6 @@ function g.key(x, y, z)
   --gridredraw()
 end
 
-function forid(id)
-  if clockids[id] == nil then
-    clockids[id] = true
-  else
-    print("clock id already exists")
-  end
-end
-
-
 local function note_id_to_info(id)
   id = id .. ""
   note_hash = id:sub(1,-3)
@@ -1193,7 +1181,7 @@ function lighting_update_handler()
           obj.dir = -1
         end
       elseif obj.current == obj.pmax then
-        obj.dir = -1        
+        obj.dir = -1
 
         if obj.shape == "rise" then
           obj.current = obj.pmin
@@ -1226,7 +1214,7 @@ function lighting_update_handler()
       end
 
       obj.frametrack = obj.frames_per_step
-    end    
+    end
   end
 
   for x=1,16 do
@@ -1270,12 +1258,12 @@ end
 local function start_note(id, note, detune)
   detune = detune or 0
   engine.start(id, music.note_num_to_freq(note) + detune)
-end  
+end
 
 local function stop_note(id)
   if params:get("output") == 1 then
     engine.stop(id)
-  end      
+  end
 end
 
 function clear_notes(source)
@@ -1334,22 +1322,8 @@ function grid_to_note_num(x,y)
   return note_num
 end
 
-local function grid_coord_to_matrix_coord(x,y)
-  return {x = grid_window.x + x - 2, y = grid_window.y - y + 1}
-end
-
 local function matrix_coord_to_note_num(x,y)
   return x + y*row_interval
-end
-
-local function note_num_to_note_name (x)
-  return note_table[(x % 12) + 1]
-end
-
-local function clear_table(table)
-  for i in pairs(table) do
-    table[i] = nil
-  end
 end
 
 function table_size(table)
@@ -1552,16 +1526,17 @@ function gridredraw()
   for x=1,16 do 
     for y=1,8 do
       if true then
-      --if grid_led[x][y].dirty then
-      if grid_led[x][y].add ~= nil then
-        grid_led_add(x, y, grid_led[x][y].add)
+        --if grid_led[x][y].dirty then
+        if grid_led[x][y].add ~= nil then
+          grid_led_add(x, y, grid_led[x][y].add)
+        end
+
+        g:led(x,y,grid_led[x][y].level)
       end
-      g:led(x,y,grid_led[x][y].level)
     end
   end
-end
 
-g:refresh()
+  g:refresh()
 end
 
 function enc(n,delta)
@@ -1706,8 +1681,6 @@ function map_knobs_to_timef_ctrl()
   end
 end
 
-
-
 function metronome()
   while true do
     clock.sync(divnum / divdenom)
@@ -1775,7 +1748,7 @@ function redraw()
     screen.text("p2 tf: " .. params:get("pat2tf"))
   elseif pattern2_sync == "clock" then
     screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
-  end 
+  end
 
   -- --draw metronome visualizer
   -- screen.level(14)
@@ -1815,6 +1788,7 @@ end
 
 function note_off(note, vel)
   engine.stop(note)
+  print('hey')
   stop_screen_note(note)
   nvoices = nvoices - 1
 end
