@@ -110,157 +110,27 @@ local function note_hasher(x,y)
   return y*40 + x
 end
 
-function tempo_watcher()
-  while true do
-    if bpm ~= clock.get_tempo() then
-      bpm = clock.get_tempo()
-      if pattern1_sync == "clock" then
-        if pat1.rec == 1 then
-          pattern_record_stop(1)
-          pattern_clear(1)
-        else
-          params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-        end
-      end
-
-      if pattern2_sync == "clock" then
-        if pat2.rec == 1 then
-          pattern_record_stop(2)
-          pattern_clear(2)
-        else
-          params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-        end
-      end
-    end
-    clock.sleep(1/60)
-  end
-end
-
-function init()
-  pat1 = pattern_time.new()
-  pat1.process = pattern_note
-  patterns[1] = {}
-  patterns[1].pattern = pat1
-  patterns[1].sync = false
-
-  pat2 = pattern_time.new()
-  pat2.process = pattern_note
-  patterns[2] = {}
-  patterns[2].pattern = pat2
-  patterns[2].sync = false
-
-  params:add_option("enc1","enc1", enc_control_options, 4)
-  params:add_option("enc2","enc2", enc_control_options, 5)
-  params:add_option("enc3","enc3", enc_control_options, 6)
-  params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
-  tf_control = controlspec.new(.01,100,'lin',.01,1,'x time',0.0001,false)
-  params:add_control("pat1tf","pattern1 timef",tf_control)
-  params:add_control("pat2tf","pattern2 timef",tf_control)
-  tf_mult_control = controlspec.new(1,64,'lin',1,1)
-  params:add_control("pat1synctfn","pattern 1 sync numer",tf_mult_control)
-  params:add_control("pat1synctfd","pattern 1 sync denom",tf_mult_control)
-  params:add_control("pat2synctfn","pattern 2 sync numer",tf_mult_control)
-  params:add_control("pat2synctfd","pattern 2 sync denom",tf_mult_control)
-  params:hide("pat1tf")
-  params:hide("pat2tf")
-  params:hide("pat1synctfn")
-  params:hide("pat1synctfd")
-  params:hide("pat2synctfn")
-  params:hide("pat2synctfd")
-
-  params:set_action("pat1tf", function(tf)
-    pat1:set_time_factor(tf)
-  end)
-
-  params:set_action("pat2tf", function(tf)
-    pat2:set_time_factor(tf)
-  end)
-
-  params:set_action("pat1synctfn", function(n)
+function tempo_change_handler(tempo)
+  if bpm ~= tempo then
+    bpm = tempo
     if pattern1_sync == "clock" then
-      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-      if reset_clock_id1 ~= nil then
-        clock.cancel(reset_clock_id1)
-        --reset_clock_id1 = clock.run(pattern1_reset_sync)
-        reset_clock_id1 = nil
+      if pat1.rec == 1 then
+        pattern_record_stop(1)
+        pattern_clear(1)
+      else
+        params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
       end
     end
-  end)
 
-  params:set_action("pat1synctfd", function(n)
-    if pattern1_sync == "clock" then
-      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-      if reset_clock_id1 ~= nil then
-        clock.cancel(reset_clock_id1)
-        --reset_clock_id1 = clock.run(pattern1_reset_sync)
-        reset_clock_id1 = nil
-      end
-    end
-  end)
-
-  params:set_action("pat2synctfn", function(n)
     if pattern2_sync == "clock" then
-      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-      if reset_clock_id2 ~= nil then
-        clock.cancel(reset_clock_id2)
-        reset_clock_id2 = clock.run(pattern2_reset_sync)
+      if pat2.rec == 1 then
+        pattern_record_stop(2)
+        pattern_clear(2)
+      else
+        params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
       end
     end
-  end)
-
-  params:set_action("pat2synctfd", function(n)
-    if pattern2_sync == "clock" then
-      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-      if reset_clock_id2 ~= nil then
-        clock.cancel(reset_clock_id2)
-        reset_clock_id2 = clock.run(pattern2_reset_sync)
-      end
-    end
-  end)
-
-  params:add_separator()
-
-  polysub:params()
-
-  params:add_separator()
-
-  engine.stopAll()
-
-  params:bang()
-
-  grid_led = grid_led_array_init()
-  grid_presses = grid_press_array_init()
-
-  grid_refresh_metro = metro.init()
-  grid_refresh_metro.event = function(stage)
-    lighting_update_handler()
-    gridredraw()
   end
-  grid_refresh_metro:start(1 / visual_refresh_rate)
-
-  screen_refresh_metro = metro.init()
-  screen_refresh_metro.event = function(stage)
-    redraw()
-  end
-  screen_refresh_metro:start(1/60)
-
-  metroid = clock.run(metronome)
-  tempo_watch_id = clock.run(tempo_watcher)
-
-
-  softcut.buffer_clear()
-  softcut.buffer_read_mono(file,0,0,-1,1,1)
-
-  softcut.enable(1,1)
-  softcut.buffer(1,1)
-  softcut.level(1,0)
-  softcut.loop(1,0)
-  softcut.loop_start(1,0)
-  softcut.loop_end(1,1)
-  softcut.position(1,1)
-  softcut.rate(1,1.0)
-  softcut.fade_time(1,0)
-  softcut.play(1,1)
 end
 
 local function create_fixed_pulse(x, y, pmin, pmax, rate, shape)
@@ -643,7 +513,7 @@ function pattern2_record_start_sync()
 end
 
 
-local function pattern_record_stop(n)
+function pattern_record_stop(n)
   pattern = patterns[n].pattern
 
   for id, e in pairs(pressed_notes) do
@@ -943,7 +813,7 @@ function pattern2_reset_sync()
   pattern_start(2)
 end
 
-local function pattern_clear(n)
+function pattern_clear(n)
   pattern = patterns[n].pattern
 
   if pattern.play == 1 then
@@ -1791,6 +1661,138 @@ function note_off(note, vel)
   print('hey')
   stop_screen_note(note)
   nvoices = nvoices - 1
+end
+
+function init()
+  pat1 = pattern_time.new()
+  pat1.process = pattern_note
+  patterns[1] = {}
+  patterns[1].pattern = pat1
+  patterns[1].sync = false
+
+  pat2 = pattern_time.new()
+  pat2.process = pattern_note
+  patterns[2] = {}
+  patterns[2].pattern = pat2
+  patterns[2].sync = false
+
+  params:add_option("enc1","enc1", enc_control_options, 4)
+  params:add_option("enc2","enc2", enc_control_options, 5)
+  params:add_option("enc3","enc3", enc_control_options, 6)
+  params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
+  tf_control = controlspec.new(.01,100,'lin',.01,1,'x time',0.0001,false)
+  params:add_control("pat1tf","pattern1 timef",tf_control)
+  params:add_control("pat2tf","pattern2 timef",tf_control)
+  tf_mult_control = controlspec.new(1,64,'lin',1,1)
+  params:add_control("pat1synctfn","pattern 1 sync numer",tf_mult_control)
+  params:add_control("pat1synctfd","pattern 1 sync denom",tf_mult_control)
+  params:add_control("pat2synctfn","pattern 2 sync numer",tf_mult_control)
+  params:add_control("pat2synctfd","pattern 2 sync denom",tf_mult_control)
+  params:hide("pat1tf")
+  params:hide("pat2tf")
+  params:hide("pat1synctfn")
+  params:hide("pat1synctfd")
+  params:hide("pat2synctfn")
+  params:hide("pat2synctfd")
+
+  params:set_action("pat1tf", function(tf)
+    pat1:set_time_factor(tf)
+  end)
+
+  params:set_action("pat2tf", function(tf)
+    pat2:set_time_factor(tf)
+  end)
+
+  params:set_action("pat1synctfn", function(n)
+    if pattern1_sync == "clock" then
+      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+      if reset_clock_id1 ~= nil then
+        clock.cancel(reset_clock_id1)
+        --reset_clock_id1 = clock.run(pattern1_reset_sync)
+        reset_clock_id1 = nil
+      end
+    end
+  end)
+
+  params:set_action("pat1synctfd", function(n)
+    if pattern1_sync == "clock" then
+      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+      if reset_clock_id1 ~= nil then
+        clock.cancel(reset_clock_id1)
+        --reset_clock_id1 = clock.run(pattern1_reset_sync)
+        reset_clock_id1 = nil
+      end
+    end
+  end)
+
+  params:set_action("pat2synctfn", function(n)
+    if pattern2_sync == "clock" then
+      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+      if reset_clock_id2 ~= nil then
+        clock.cancel(reset_clock_id2)
+        reset_clock_id2 = clock.run(pattern2_reset_sync)
+      end
+    end
+  end)
+
+  params:set_action("pat2synctfd", function(n)
+    if pattern2_sync == "clock" then
+      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+      if reset_clock_id2 ~= nil then
+        clock.cancel(reset_clock_id2)
+        reset_clock_id2 = clock.run(pattern2_reset_sync)
+      end
+    end
+  end)
+
+  local clock_tempo = params:lookup_param("clock_tempo")
+  local current_action = clock_tempo.action
+  clock_tempo.action = function(x)
+    current_action(x)
+    tempo_change_handler(x)
+  end
+
+  params:add_separator()
+
+  polysub:params()
+
+  params:add_separator()
+
+  engine.stopAll()
+
+  params:bang()
+
+  grid_led = grid_led_array_init()
+  grid_presses = grid_press_array_init()
+
+  grid_refresh_metro = metro.init()
+  grid_refresh_metro.event = function(stage)
+    lighting_update_handler()
+    gridredraw()
+  end
+  grid_refresh_metro:start(1 / visual_refresh_rate)
+
+  screen_refresh_metro = metro.init()
+  screen_refresh_metro.event = function(stage)
+    redraw()
+  end
+  screen_refresh_metro:start(1/60)
+
+  metroid = clock.run(metronome)
+
+  softcut.buffer_clear()
+  softcut.buffer_read_mono(file,0,0,-1,1,1)
+
+  softcut.enable(1,1)
+  softcut.buffer(1,1)
+  softcut.level(1,0)
+  softcut.loop(1,0)
+  softcut.loop_start(1,0)
+  softcut.loop_end(1,1)
+  softcut.position(1,1)
+  softcut.rate(1,1.0)
+  softcut.fade_time(1,0)
+  softcut.play(1,1)
 end
 
 function r()
