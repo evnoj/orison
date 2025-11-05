@@ -72,7 +72,7 @@ local grid_metro_flash = false
 local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1tf","pat1synctfn","pat1synctfd","pat2tf","pat2synctfn","pat2synctfd","clock_tempo"}
 
 -- forward declare functions
-local pattern_record_start, pattern_record_start_sync, pattern_record_stop, pattern_clear,pattern_record_start_sync,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,stop_note,matrix_coord_to_note_num,pattern_stop_sync,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern_record_stop,pattern_record_stop_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern_start_sync,pattern1_start_sync,pattern2_start_sync,pattern_reset_sync,pattern1_reset_sync,pattern2_reset_sync,pattern_clear,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
+local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern1_start_sync,pattern2_start_sync,pattern1_reset_sync,pattern2_reset_sync,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
 
 grid_led_array_init = function()
   init_grid = {}
@@ -252,56 +252,6 @@ pattern_stop = function(n)
   clear_fixed_pulse(x,y)
 end
 
-pattern_stop_sync = function(n)
-  print("pattern stop sync " .. n)
-
-  --pattern = patterns[n].pattern
-  if n == 1 then
-    pattern = pat1
-    reset_clock_id = reset_clock_id1
-    stoparm1 = true
-  elseif n == 2 then
-    pattern = pat2
-    reset_clock_id = reset_clock_id2
-    stoparm2 = true
-  else
-    print("huh?")
-  end
-
-  if reset_clock_id ~= nil then
-    clock.cancel(reset_clock_id)
-  end
-
-  clock.sync(1)
-
-  if n == 1 then
-    stoparm1 = false
-  elseif n == 2 then
-    stoparm2 = false
-  else
-    print("huh?")
-  end
-
-  pattern:stop()
-  clear_notes("pattern" .. n)
-
-  if n == 1 then
-    x = 1
-    y = 3
-  elseif n == 2 then
-    x = 1
-    y = 4
-  end
-
-  if pattern.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-end
-
 pattern1_stop_sync = function(n)
   stoparm1 = true
 
@@ -388,57 +338,6 @@ pattern_record_start = function (n)
     x = 1
     y = 4
     level = pattern_2_led_level + 2
-  end
-
-  create_fixed_pulse(x,y,0,level,.9,"fall")
-end
-
-pattern_record_start_sync = function(n)
-  print("pattern rec start sync" .. n)
-  --pattern = patterns[n].pattern
-  if n == 1 then
-    pattern = pat1
-    pattern1_sync = "clock"
-  elseif n == 2 then
-    pattern = pat2
-    pattern2_sync = "clock"
-  else
-    print("huh?")
-  end
-
-  pattern_stop(n)
-  pattern:clear()
-
-  if n == 1 then
-    x = 1
-    y = 3
-    level = pattern_1_led_level
-  elseif n == 2 then
-    x = 1
-    y = 4
-    level = pattern_2_led_level + 2
-  end
-
-  create_fixed_pulse(x,y,0,level,.3,"wave")
-
-  clock.sync(1)
-
-  clear_fixed_pulse(x,y)
-
-  pattern:rec_start()
-
-  s = {}
-  s.starter = true
-  pattern:watch(s) 
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 1
-    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
-
-    pattern:watch(p)
   end
 
   create_fixed_pulse(x,y,0,level,.9,"fall")
@@ -576,60 +475,6 @@ pattern_start = function(n)
   create_fixed_pulse(x,y,0,level,.9,"rise")
 end
 
-pattern_record_stop_sync = function(n)
-  print("pattern rec stop sync " .. n)
-  --pattern = patterns[n].pattern
-  if n == 1 then
-    pattern = pat1
-  elseif n == 2 then
-    pattern = pat2
-  else
-    print("huh?")
-  end
-
-  s = {}
-  s.syncer = true
-  s.n = n
-  pattern:watch(s)
-
-  clock.sync(1)
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 0
-    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
-
-    pattern:watch(p)
-  end
-
-  pattern:rec_stop()
-
-  if n == 1 then
-    x = 1
-    y = 3
-  elseif n == 2 then
-    x = 1
-    y = 4
-  end
-
-  if pattern.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-
-  if pattern.count == 2 then
-    pattern_clear(n)
-    return
-  end
-
-  pattern_start(n)
-end
-
 pattern1_record_stop_sync = function(n)
   s = {}
   s.syncer = true
@@ -716,26 +561,6 @@ pattern2_record_stop_sync = function(n)
   pattern_start(2)
 end
 
-pattern_start_sync = function(n)
-  print("pattern start sync " .. n)
-  --pattern = patterns[n].pattern
-  if n == 1 then
-    pattern = pat1
-  elseif n == 2 then
-    pattern = pat2
-  else
-    print("huh?")
-  end
-
-  if pattern.count == 0 then
-    return
-  end
-
-  clock.sync(1)
-
-  pattern_start(n)
-end
-
 pattern1_start_sync = function(n)
   if pat1.count == 0 then
     return
@@ -754,36 +579,6 @@ pattern2_start_sync = function(n)
   clock.sync(1)
 
   pattern_start(2)
-end
-
-pattern_reset_sync = function(n)
-  print("pattern reset sync" .. n)
-  --pattern = patterns[n].pattern
-  if n == 1 then
-    pattern = pat1
-  elseif n == 2 then
-    pattern = pat2
-  else
-    print("huh?")
-  end
-
-  if pattern.count == 0 then
-    return
-  end
-
-  clock.sync(1)
-
-  pattern_stop(n)
-
-  if n == 1 then
-    reset_clock_id1 = nil
-  elseif n == 2 then
-    reset_clock_id2 = nil
-  else
-    print("huh?")
-  end
-
-  pattern_start(n)
 end
 
 pattern1_reset_sync = function()
@@ -873,7 +668,6 @@ function g.key(x, y, z)
         elseif altkey then
           pattern_stop(n)
           pattern_clear(n)
-          --print(clock.run(pattern_record_start_sync, n))
           if n == 1 then
             clock.run(pattern1_record_start_sync)
           elseif n == 2 then
@@ -884,8 +678,6 @@ function g.key(x, y, z)
         elseif pattern.rec == 0 and pattern.count == 0 then
           pattern_record_start(n)
         elseif pattern.rec == 1 and sync == "clock" then
-          --print(clock.run(pattern_record_stop_sync, n))
-
           if n == 1 then
             clock.run(pattern1_record_stop_sync)
           elseif n == 2 then
@@ -897,8 +689,6 @@ function g.key(x, y, z)
           pattern_record_stop(n)
           pattern_start(n)
         elseif pattern.play == 0 and sync == "clock" then
-          --print(clock.run(pattern_start_sync, n))
-
           if n == 1 then
             clock.run(pattern1_start_sync)
           elseif n == 2 then
@@ -909,7 +699,6 @@ function g.key(x, y, z)
         elseif pattern.play == 0 and sync == false then
           pattern_start(n)
         elseif pattern.play == 1 and sync == "clock" then
-          --print(clock.run(pattern_stop_sync, n))
 
           if n == 1 then
             clock.run(pattern1_stop_sync)
@@ -1131,12 +920,6 @@ start_note = function(id, note, detune)
   engine.start(id, music.note_num_to_freq(note) + detune)
 end
 
-stop_note = function(id)
-  if params:get("output") == 1 then
-    engine.stop(id)
-  end
-end
-
 clear_notes = function(source)
   source = source or "all"
 
@@ -1292,20 +1075,12 @@ pattern_note = function(e)
   if e.starter == true then
     return
   elseif e.syncer then
-    n = e.n
-
-    if n == 1 and stoparm1 ~= true then
+    if e.n == 1 and stoparm1 ~= true then
       reset_clock_id1 = clock.run(pattern1_reset_sync)
-    elseif n == 2 and stoparm2 ~= true then
+    elseif e.n == 2 and stoparm2 ~= true then
       reset_clock_id2 = clock.run(pattern2_reset_sync)
     end
 
-    -- print("encountered syncer event for pattern " .. n)
-    -- if patterns[n].stoparm ~= true then
-    --   clockid = clock.run(pattern_reset_sync, n)
-    --   print(clockid)
-    --   patterns[n].reset_clock_id = clockid
-    -- end
     return
   end
 
