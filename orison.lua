@@ -37,11 +37,13 @@ local options = {
   same_note_behavior = {"retrigger", "detuned", "ignore", "separate"}
 }
 
-local sources = {pressed = 1,
+local sources = {
+  pressed = 1,
   pattern1 = 2,
-  pattern2 = 3}
+  pattern2 = 3
+}
 
-  engine.name = 'PolySub'
+engine.name = 'PolySub'
 
 -- current count of active voices
 local nvoices = 0
@@ -67,7 +69,6 @@ local reset_clock_id2 = nil
 local stoparm2 = false
 local grid_metro_level = 0
 local grid_metro_flash = false
-local prev_time = 0
 local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1tf","pat1synctfn","pat1synctfd","pat2tf","pat2synctfn","pat2synctfd","clock_tempo"}
 
 local function grid_led_array_init()
@@ -225,7 +226,7 @@ function init()
   polysub:params()
 
   params:add_separator()
-  
+
   engine.stopAll()
 
   params:bang()
@@ -248,11 +249,11 @@ function init()
 
   metroid = clock.run(metronome)
   tempo_watch_id = clock.run(tempo_watcher)
-  
-  
+
+
   softcut.buffer_clear()
   softcut.buffer_read_mono(file,0,0,-1,1,1)
-  
+
   softcut.enable(1,1)
   softcut.buffer(1,1)
   softcut.level(1,0)
@@ -372,7 +373,7 @@ local function pattern_stop(n)
     x = 1
     y = 4
   end
-  
+
   if pattern.count == 0 then
     grid_led[x][y].add = nil
   else
@@ -422,7 +423,7 @@ function pattern_stop_sync(n)
     x = 1
     y = 4
   end
-  
+
   if pattern.count == 0 then
     grid_led[x][y].add = nil
   else
@@ -448,7 +449,7 @@ function pattern1_stop_sync(n)
 
   x = 1
   y = 3
-  
+
   if pat1.count == 0 then
     grid_led[x][y].add = nil
   else
@@ -474,13 +475,13 @@ function pattern2_stop_sync(n)
 
   x = 1
   y = 4
-  
+
   if pat2.count == 0 then
     grid_led[x][y].add = nil
   else
     grid_led[x][y].add = 2
   end
-  
+
   clear_fixed_pulse(x,y)
 end
 
@@ -552,9 +553,9 @@ function pattern_record_start_sync(n)
   create_fixed_pulse(x,y,0,level,.3,"wave")
 
   clock.sync(1)
-  
+
   clear_fixed_pulse(x,y)
-  
+
   pattern:rec_start()
 
   s = {}
@@ -586,10 +587,10 @@ function pattern1_record_start_sync()
   create_fixed_pulse(x,y,0,level,.3,"wave")
 
   clock.sync(1)
-  
+
   clear_fixed_pulse(x,y)
   pattern1_basebpm = bpm
-  
+
   pat1:rec_start()
 
   s = {}
@@ -621,10 +622,10 @@ function pattern2_record_start_sync()
   create_fixed_pulse(x,y,0,level,.3,"wave")
 
   clock.sync(1)
-  
+
   clear_fixed_pulse(x,y)
   pattern2_basebpm = bpm
-  
+
   pat2:rec_start()
 
   s = {}
@@ -722,7 +723,7 @@ function pattern_record_stop_sync(n)
   s.syncer = true
   s.n = n
   pattern:watch(s)
-  
+
   clock.sync(1)
 
   for id, e in pairs(pressed_notes) do
@@ -766,7 +767,7 @@ function pattern1_record_stop_sync(n)
   s.syncer = true
   s.n = 1
   pat1:watch(s)
-  
+
   clock.sync(1)
 
   for id, e in pairs(pressed_notes) do
@@ -809,7 +810,7 @@ function pattern2_record_stop_sync(n)
   s.syncer = true
   s.n = 2
   pat2:watch(s)
-  
+
   clock.sync(1)
 
   for id, e in pairs(pressed_notes) do
@@ -963,7 +964,7 @@ local function pattern_clear(n)
     y = 4
     pattern2_sync = false
   end
-  
+
   grid_led[x][y].add = nil
 end
 
@@ -1161,7 +1162,6 @@ function lighting_update_handler()
   -- light transpose keys
   grid_led_set(1, 1, math.floor((grid_window.y - 7) / 2))
   grid_led_set(1, 2, math.floor((21 - grid_window.y) / 2))
-
 
   for id,e in pairs(currently_playing) do
     note_info = note_id_to_info(id)
@@ -1723,17 +1723,17 @@ function redraw()
   screen.clear()
   screen.aa(0)
   screen.line_width(1)
-  
+
   screen.move(1,5)
   screen.level(4)
   screen.text("bpm: ".. bpm)
-  
+
   if metrorun == 1 then
     screen.level(15)
   end
   screen.move(50,5)
   screen.text("div: " .. divnum .. "/" .. divdenom)
-  
+
   if enc_control == 0 then
     screen.level(15)
   else
@@ -1745,7 +1745,7 @@ function redraw()
   screen.text("amp rel: " .. params:string("amprel"))
   screen.move(1,32)
   screen.text("cut: " .. params:string("cut"))
-  
+
   if enc_control == 1 then
     screen.level(15)
   else
@@ -1801,7 +1801,7 @@ function redraw()
   screen.circle(114,7,4)
   screen.fill()
 
-  
+
   screen.update()
 end
 
