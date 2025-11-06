@@ -74,41 +74,6 @@ local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","p
 -- forward declare functions
 local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern1_start_sync,pattern2_start_sync,pattern1_reset_sync,pattern2_reset_sync,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
 
-grid_led_array_init = function()
-  init_grid = {}
-
-  for x=1,16 do
-    init_grid[x] = {}
-    for y=1,8 do
-      init_grid[x][y] = {level = 0, dirty = false}
-    end
-  end
-
-  return init_grid
-end
-
-grid_press_array_init = function()
-  init_grid = {}
-
-  for x=1,16 do
-    init_grid[x] = {}
-    for y=1,8 do
-      init_grid[x][y] = 0
-    end
-  end
-
-  return init_grid
-end
-
-grid_led_clear = function()
-  for x=1,16 do
-    for y=1,8 do
-      grid_led[x][y].level = 0
-      grid_led[x][y].dirty = true
-    end
-  end
-end
-
 note_hasher = function(x,y)
   return y*40 + x
 end
@@ -134,52 +99,6 @@ tempo_change_handler = function(tempo)
       end
     end
   end
-end
-
-create_fixed_pulse = function(x, y, pmin, pmax, rate, shape)
-  pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed", shape = shape}
-
-  if shape == "wave" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
-  elseif shape == "rise" or shape == "fall" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (pmax - pmin))
-
-    if shape == "fall" then
-      pulse.dir = -1
-      pulse.current = pmax
-    end
-  end
-  pulse.frametrack = pulse.frames_per_step
-
-  id = y*16 + x
-  lighting_over_time.fixed[id] = pulse
-
-  return pulse
-end
-
-clear_fixed_pulse = function(x, y)
-  id = y*16 + x
-  lighting_over_time.fixed[id] = nil
-end
-
-create_mod_pulse = function(range, rate, note_id, shape)
-  pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
-
-  if shape == "wave" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*range))
-  elseif shape == "rise" or shape == "fall" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / range)
-
-    if shape == "fall" then
-      pulse.dir = -1
-      pulse.current = range
-    end
-  end
-  pulse.frametrack = pulse.frames_per_step
-
-  lighting_over_time.mod[note_id] = pulse
-
-  return pulse
 end
 
 start_holding = function()
@@ -227,6 +146,248 @@ remove_from_held = function(id)
 
   if table_size(held_notes) == 0 then
     stop_holding()
+  end
+end
+
+start_note = function(id, note, detune)
+  detune = detune or 0
+  engine.start(id, music.note_num_to_freq(note) + detune)
+end
+
+clear_notes = function(source)
+  source = source or "all"
+
+  if source == "all" then
+    for id,e in pairs(currently_playing) do
+      currently_playing[id] = nil
+      e.state = 0
+      matrix_note(e)
+    end
+
+    for id in pairs(pressed_notes) do
+      pressed_notes[id] = nil
+    end
+
+    if holding then
+      for id in pairs(held_notes) do
+        held_notes[id] = nil
+      end
+      lighting_over_time.fixed[129] = nil
+      holding = false
+    end
+  end
+
+  if source == "pattern1" then
+    for id, e in pairs(currently_playing) do
+      if get_digit(id, 2) == sources.pattern1 then
+        e.state = 0
+        matrix_note(e)
+        e.state = 1
+      end
+    end
+  end
+
+  if source == "pattern2" then
+    for id, e in pairs(currently_playing) do
+      if get_digit(id, 2) == sources.pattern2 then
+        currently_playing[id] = nil
+        e.state = 0
+        matrix_note(e)
+        e.state = 1
+      end
+    end
+  end
+end
+
+grid_to_note_num = function(x,y)
+  note_num = (grid_window.y - y + 1)*5 + grid_window.x + x - 2
+  return note_num
+end
+
+matrix_coord_to_note_num = function(x,y)
+  return x + y*row_interval
+end
+
+matrix_note = function(e)
+  local note_num = matrix_coord_to_note_num(e.x, e.y)
+  if e.state > 0 then
+    if nvoices < MAX_NUM_VOICES then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          if params:string("same_note_behavior") == "ignore" then
+            return
+          elseif params:string("same_note_behavior") == "detuned" then
+            detune = math.random(-1, 1) * 3
+
+            -- if note already being played is from same source, change id to not conflict
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end
+          elseif params:string("same_note_behavior") == "retrigger" then
+            -- stop engine from playing any instance of same note, but leave note in currently_playing
+            for i=0,99 do
+              engine.stop(note_hash2*100+i)
+            end
+            nvoices = nvoices - 1
+
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                retriggertracker = retriggertracker + 1
+                e.id = math.floor(e.id / 10) * 10 + util.wrap(retriggertracker, 0, 9)
+              end
+            end
+          elseif params:string("same_note_behavior") == "separate" then
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end 
+          end
+        end
+      end
+      start_note(e.id, note_num, detune)
+      currently_playing[e.id] = e
+      nvoices = nvoices + 1
+    else
+      print("maximum voices reached")
+    end
+  else
+    if held_notes[e.id] ~= nil then
+      return
+    end
+
+    currently_playing[e.id] = nil
+
+    --if in retrigger mode, only stop note if no other sources are playing it
+    if params:string("same_note_behavior") == "retrigger" then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          return -- if another source is playing the note, don't stop engine
+        end
+      end
+
+      --since no instances of same note are playing, stop any possible instance of the note
+      for i=0,99 do
+        engine.stop(note_hash*100+i)
+      end
+    end
+
+    engine.stop(e.id)
+    nvoices = nvoices - 1
+  end
+end
+
+--- CLOCKWORKS
+metronome = function()
+  while true do
+    clock.sync(divnum / divdenom)
+    if grid_metro_flash then
+      grid_metro_level = 4
+    end
+
+    softcut.position(1,0)
+  end
+end
+
+--- PATTERNS
+pattern_note = function(e)
+  if e.starter == true then
+    return
+  elseif e.syncer then
+    if e.n == 1 and stoparm1 ~= true then
+      reset_clock_id1 = clock.run(pattern1_reset_sync)
+    elseif e.n == 2 and stoparm2 ~= true then
+      reset_clock_id2 = clock.run(pattern2_reset_sync)
+    end
+
+    return
+  end
+
+  local note_num = matrix_coord_to_note_num(e.x, e.y)
+  if e.state > 0 then
+    if nvoices < MAX_NUM_VOICES then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          if params:string("same_note_behavior") == "ignore" then
+            return
+          elseif params:string("same_note_behavior") == "detuned" then
+            detune = math.random(-1, 1) * 3
+
+            -- if note already being played is from same source, change id to not conflict
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end
+          elseif params:string("same_note_behavior") == "retrigger" then
+            -- stop engine from playing any instance of same note, but leave note in currently_playing
+            for i=0,99 do
+              engine.stop(note_hash2*100+i)
+            end
+            nvoices = nvoices - 1
+
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                retriggertracker = retriggertracker + 1
+                e.id = e.id + util.wrap(retriggertracker, 0, 9)
+              end
+            end
+          elseif params:string("same_note_behavior") == "separate" then
+            if currently_playing[e.id] ~= nil then
+              while currently_playing[e.id] ~= nil do
+                e.id = e.id + 1
+              end
+            end 
+          end
+        end
+      end
+      start_note(e.id, note_num, detune)
+      currently_playing[e.id] = e
+      nvoices = nvoices + 1
+    else
+      print("maximum voices reached")
+    end
+  else
+    currently_playing[e.id] = nil
+
+    --if in retrigger mode, only stop note if no other sources are playing it
+    if params:string("same_note_behavior") == "retrigger" then
+      id = e.id .. ""
+      note_hash = id:sub(1,-3)
+      detune = 0
+      for id2,e2 in pairs(currently_playing) do
+        id2 = id2 .. ""
+        note_hash2 = id2:sub(1,-3)
+        if note_hash == note_hash2 then
+          return -- if another source is playing the note, don't stop engine
+        end
+      end
+
+      --since no instances of same note are playing, stop any possible instance of the note
+      for i=0,99 do
+        engine.stop(note_hash*100+i)
+      end
+    end
+
+    engine.stop(e.id)
+    nvoices = nvoices - 1
   end
 end
 
@@ -631,6 +792,340 @@ pattern_clear = function(n)
   grid_led[x][y].add = nil
 end
 
+--- DRAWING
+lighting_update_handler = function()
+  grid_led_clear()
+
+  -- light c notes
+  for x = 2,16,1 do
+    for y = 1,8,1 do
+      if grid_to_note_num(x,y) == 60 then
+        grid_led_set(x,y,7)
+      elseif grid_to_note_num(x,y) % 12 == 0 then
+        grid_led_set(x,y,4)
+      end
+    end
+  end
+
+  -- light transpose keys
+  grid_led_set(1, 1, math.floor((grid_window.y - 7) / 2))
+  grid_led_set(1, 2, math.floor((21 - grid_window.y) / 2))
+
+  for id,e in pairs(currently_playing) do
+    note_info = note_id_to_info(id)
+    if note_info.source == "1" then
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, 1)
+    elseif note_info.source == "2" then
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_1_led_level)
+    elseif note_info.source == "3" then
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_2_led_level)
+    end
+
+    if e.pulser ~= nil then
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, e.pulser.current) 
+    end
+  end
+
+  for i, obj in pairs(lighting_over_time.fixed) do
+    obj.frametrack = obj.frametrack - 1
+    grid_led_set(obj.x, obj.y, obj.current)
+
+    if obj.frametrack == 0 then
+      obj.current = obj.current + obj.dir
+
+      if obj.current == obj.pmin then
+        obj.dir = 1
+
+        if obj.shape == "fall" then
+          obj.current = obj.pmax
+          obj.dir = -1
+        end
+      elseif obj.current == obj.pmax then
+        obj.dir = -1
+
+        if obj.shape == "rise" then
+          obj.current = obj.pmin
+          obj.dir = 1
+        end
+      end
+
+      obj.frametrack = obj.frames_per_step
+    end
+  end
+
+  for i, obj in pairs(lighting_over_time.mod) do
+    obj.frametrack = obj.frametrack - 1
+    if obj.frametrack == 0 then
+      obj.current = obj.current + obj.dir
+      if obj.current == 0 then
+        obj.dir = 1
+
+        if obj.shape == "fall" then
+          obj.current = obj.range
+          obj.dir = -1
+        end
+      elseif obj.current == obj.range then
+        obj.dir = -1        
+
+        if obj.shape == "rise" then
+          obj.current = 0
+          obj.dir = 1
+        end
+      end
+
+      obj.frametrack = obj.frames_per_step
+    end
+  end
+
+  for x=1,16 do
+    for y=1,8 do
+      grid_led_add(x,y,grid_metro_level)
+    end
+  end
+
+  grid_metro_level = util.clamp(grid_metro_level - 1, 0, 15)
+
+  gridredraw()
+end
+
+grid_led_array_init = function()
+  init_grid = {}
+
+  for x=1,16 do
+    init_grid[x] = {}
+    for y=1,8 do
+      init_grid[x][y] = {level = 0, dirty = false}
+    end
+  end
+
+  return init_grid
+end
+
+grid_led_set = function(x, y, level)
+  level = util.clamp(level,0,15)
+
+  if x < 1 or x > 16 or y < 1 or y > 8 or level == grid_led[x][y].level then
+    return
+  else
+    grid_led[x][y].level = level
+    grid_led[x][y].dirty = true
+  end
+end
+
+grid_led_add = function(x, y, val)
+  if val == 0 or x < 1 or x > 16 or y < 1 or y > 8 then
+    return
+  end
+
+  level = grid_led[x][y].level
+
+  if val > 0 and level == 15 then
+    return
+  elseif val < 0 and level == 0 then
+    return
+  else
+    grid_led[x][y].level = util.clamp(level + val, 0, 15)
+  end
+end
+
+grid_led_clear = function()
+  for x=1,16 do
+    for y=1,8 do
+      grid_led[x][y].level = 0
+      grid_led[x][y].dirty = true
+    end
+  end
+end
+
+gridredraw = function()
+  --g:all(0)
+
+  for x=1,16 do 
+    for y=1,8 do
+      if true then
+        --if grid_led[x][y].dirty then
+        if grid_led[x][y].add ~= nil then
+          grid_led_add(x, y, grid_led[x][y].add)
+        end
+
+        g:led(x,y,grid_led[x][y].level)
+      end
+    end
+  end
+
+  g:refresh()
+end
+
+create_fixed_pulse = function(x, y, pmin, pmax, rate, shape)
+  pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed", shape = shape}
+
+  if shape == "wave" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
+  elseif shape == "rise" or shape == "fall" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (pmax - pmin))
+
+    if shape == "fall" then
+      pulse.dir = -1
+      pulse.current = pmax
+    end
+  end
+  pulse.frametrack = pulse.frames_per_step
+
+  id = y*16 + x
+  lighting_over_time.fixed[id] = pulse
+
+  return pulse
+end
+
+clear_fixed_pulse = function(x, y)
+  id = y*16 + x
+  lighting_over_time.fixed[id] = nil
+end
+
+create_mod_pulse = function(range, rate, note_id, shape)
+  pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
+
+  if shape == "wave" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*range))
+  elseif shape == "rise" or shape == "fall" then
+    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / range)
+
+    if shape == "fall" then
+      pulse.dir = -1
+      pulse.current = range
+    end
+  end
+  pulse.frametrack = pulse.frames_per_step
+
+  lighting_over_time.mod[note_id] = pulse
+
+  return pulse
+end
+
+function redraw()
+  screen.clear()
+  screen.aa(0)
+  screen.line_width(1)
+
+  screen.move(1,5)
+  screen.level(4)
+  screen.text("bpm: ".. bpm)
+
+  if metrorun == 1 then
+    screen.level(15)
+  end
+  screen.move(50,5)
+  screen.text("div: " .. divnum .. "/" .. divdenom)
+
+  if enc_control == 0 then
+    screen.level(15)
+  else
+    screen.level(4)
+  end
+  screen.move(1,14)
+  screen.text("amp atk: " .. params:string("ampatk"))
+  screen.move(1,23)
+  screen.text("amp rel: " .. params:string("amprel"))
+  screen.move(1,32)
+  screen.text("cut: " .. params:string("cut"))
+
+  if enc_control == 1 then
+    screen.level(15)
+  else
+    screen.level(4)
+  end
+  screen.move(1,41)
+  screen.text("shape: " .. params:string("shape"))
+  screen.move(1, 50)
+  screen.text("timbre: " .. params:string("timbre")) 
+  screen.move(1,59)
+  screen.text("noise: " .. params:string("noise"))
+
+  if enc_control == 2 then
+    screen.level(15)
+  else
+    screen.level(4)
+  end
+  screen.move(64,16)
+  if pattern1_sync == false then
+    screen.text("p1 tf: " .. params:get("pat1tf"))
+  elseif pattern1_sync == "clock" then
+    screen.text("p1 tf: " .. params:get("pat1synctfn") .. " / " .. params:get("pat1synctfd"))
+  end
+
+  screen.move(64,25)
+  if pattern2_sync == false then
+    screen.text("p2 tf: " .. params:get("pat2tf"))
+  elseif pattern2_sync == "clock" then
+    screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
+  end
+
+  -- --draw metronome visualizer
+  -- screen.level(14)
+  -- screen.move(88,4)
+  -- screen.line_width(1)
+  -- screen.line(112,4)
+  -- screen.stroke()
+
+  current_beat_offset = clock.get_beats() % 1
+  -- --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
+  -- screen.level(15)
+  -- screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
+  -- screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
+  -- -- screen.move(107 + current_beat_offset * 19,0)
+  -- -- screen.line(107 + current_beat_offset * 19,7)
+  -- screen.stroke()
+
+  -- screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
+  -- screen.rect(111,0,7,7)
+  -- screen.fill()
+
+  screen.level(math.floor((1 - current_beat_offset)^2 * 14))
+  screen.circle(114,7,4)
+  screen.fill()
+
+  screen.update()
+end
+
+--- UTILS
+note_id_to_info = function(id)
+  id = id .. ""
+  note_hash = id:sub(1,-3)
+  y = math.floor(note_hash/40)
+  x = note_hash - y*40
+  return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
+end
+
+get_digit = function(num, digit)
+  local n = 10 ^ digit
+  local n1 = 10 ^ (digit - 1)
+  return math.floor((num % n) / n1)
+end
+
+table_size = function(table)
+  count = 0
+  for key, val in pairs(table) do 
+    print("key: " .. key .. " val: " .. val.id)
+    count = count + 1 
+  end
+  print("number of elements: " .. count)
+  return count
+end
+
+--- HARDWARE
+grid_press_array_init = function()
+  init_grid = {}
+
+  for x=1,16 do
+    init_grid[x] = {}
+    for y=1,8 do
+      init_grid[x][y] = 0
+    end
+  end
+
+  return init_grid
+end
+
 function g.key(x, y, z)
   grid_presses[x][y] = z
   if x == 1 then
@@ -782,401 +1277,6 @@ function g.key(x, y, z)
       matrix_note(e)
     end
   end
-  --gridredraw()
-end
-
-note_id_to_info = function(id)
-  id = id .. ""
-  note_hash = id:sub(1,-3)
-  y = math.floor(note_hash/40)
-  x = note_hash - y*40
-  return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
-end
-
-lighting_update_handler = function()
-  grid_led_clear()
-
-  -- light c notes
-  for x = 2,16,1 do
-    for y = 1,8,1 do
-      if grid_to_note_num(x,y) == 60 then
-        grid_led_set(x,y,7)
-      elseif grid_to_note_num(x,y) % 12 == 0 then
-        grid_led_set(x,y,4)
-      end
-    end
-  end
-
-  -- light transpose keys
-  grid_led_set(1, 1, math.floor((grid_window.y - 7) / 2))
-  grid_led_set(1, 2, math.floor((21 - grid_window.y) / 2))
-
-  for id,e in pairs(currently_playing) do
-    note_info = note_id_to_info(id)
-    if note_info.source == "1" then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, 1)
-    elseif note_info.source == "2" then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_1_led_level)
-    elseif note_info.source == "3" then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_2_led_level)
-    end
-
-    if e.pulser ~= nil then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, e.pulser.current) 
-    end
-  end
-
-  for i, obj in pairs(lighting_over_time.fixed) do
-    obj.frametrack = obj.frametrack - 1
-    grid_led_set(obj.x, obj.y, obj.current)
-
-    if obj.frametrack == 0 then
-      obj.current = obj.current + obj.dir
-
-      if obj.current == obj.pmin then
-        obj.dir = 1
-
-        if obj.shape == "fall" then
-          obj.current = obj.pmax
-          obj.dir = -1
-        end
-      elseif obj.current == obj.pmax then
-        obj.dir = -1
-
-        if obj.shape == "rise" then
-          obj.current = obj.pmin
-          obj.dir = 1
-        end
-      end
-
-      obj.frametrack = obj.frames_per_step
-    end
-  end
-
-  for i, obj in pairs(lighting_over_time.mod) do
-    obj.frametrack = obj.frametrack - 1
-    if obj.frametrack == 0 then
-      obj.current = obj.current + obj.dir
-      if obj.current == 0 then
-        obj.dir = 1
-
-        if obj.shape == "fall" then
-          obj.current = obj.range
-          obj.dir = -1
-        end
-      elseif obj.current == obj.range then
-        obj.dir = -1        
-
-        if obj.shape == "rise" then
-          obj.current = 0
-          obj.dir = 1
-        end
-      end
-
-      obj.frametrack = obj.frames_per_step
-    end
-  end
-
-  for x=1,16 do
-    for y=1,8 do
-      grid_led_add(x,y,grid_metro_level)
-    end
-  end
-
-  grid_metro_level = util.clamp(grid_metro_level - 1, 0, 15)
-
-  gridredraw()
-end
-
-grid_led_set = function(x, y, level)
-  level = util.clamp(level,0,15)
-
-  if x < 1 or x > 16 or y < 1 or y > 8 or level == grid_led[x][y].level then
-    return
-  else
-    grid_led[x][y].level = level
-    grid_led[x][y].dirty = true
-  end
-end
-
-grid_led_add = function(x, y, val)
-  if val == 0 or x < 1 or x > 16 or y < 1 or y > 8 then
-    return
-  end
-
-  level = grid_led[x][y].level
-
-  if val > 0 and level == 15 then
-    return
-  elseif val < 0 and level == 0 then
-    return
-  else
-    grid_led[x][y].level = util.clamp(level + val, 0, 15)
-  end
-end
-
-start_note = function(id, note, detune)
-  detune = detune or 0
-  engine.start(id, music.note_num_to_freq(note) + detune)
-end
-
-clear_notes = function(source)
-  source = source or "all"
-
-  if source == "all" then
-    for id,e in pairs(currently_playing) do
-      currently_playing[id] = nil
-      e.state = 0
-      matrix_note(e)
-    end
-
-    for id in pairs(pressed_notes) do
-      pressed_notes[id] = nil
-    end
-
-    if holding then
-      for id in pairs(held_notes) do
-        held_notes[id] = nil
-      end
-      lighting_over_time.fixed[129] = nil
-      holding = false
-    end
-  end
-
-  if source == "pattern1" then
-    for id, e in pairs(currently_playing) do
-      if get_digit(id, 2) == sources.pattern1 then
-        e.state = 0
-        matrix_note(e)
-        e.state = 1
-      end
-    end
-  end
-
-  if source == "pattern2" then
-    for id, e in pairs(currently_playing) do
-      if get_digit(id, 2) == sources.pattern2 then
-        currently_playing[id] = nil
-        e.state = 0
-        matrix_note(e)
-        e.state = 1
-      end
-    end
-  end
-end
-
-get_digit = function(num, digit)
-  local n = 10 ^ digit
-  local n1 = 10 ^ (digit - 1)
-  return math.floor((num % n) / n1)
-end
-
-grid_to_note_num = function(x,y)
-  note_num = (grid_window.y - y + 1)*5 + grid_window.x + x - 2
-  return note_num
-end
-
-matrix_coord_to_note_num = function(x,y)
-  return x + y*row_interval
-end
-
-table_size = function(table)
-  count = 0
-  for key, val in pairs(table) do 
-    print("key: " .. key .. " val: " .. val.id)
-    count = count + 1 
-  end
-  print("number of elements: " .. count)
-  return count
-end
-
-matrix_note = function(e)
-  local note_num = matrix_coord_to_note_num(e.x, e.y)
-  if e.state > 0 then
-    if nvoices < MAX_NUM_VOICES then
-      id = e.id .. ""
-      note_hash = id:sub(1,-3)
-      detune = 0
-      for id2,e2 in pairs(currently_playing) do
-        id2 = id2 .. ""
-        note_hash2 = id2:sub(1,-3)
-        if note_hash == note_hash2 then
-          if params:string("same_note_behavior") == "ignore" then
-            return
-          elseif params:string("same_note_behavior") == "detuned" then
-            detune = math.random(-1, 1) * 3
-
-            -- if note already being played is from same source, change id to not conflict
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end
-          elseif params:string("same_note_behavior") == "retrigger" then
-            -- stop engine from playing any instance of same note, but leave note in currently_playing
-            for i=0,99 do
-              engine.stop(note_hash2*100+i)
-            end
-            nvoices = nvoices - 1
-
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                retriggertracker = retriggertracker + 1
-                e.id = math.floor(e.id / 10) * 10 + util.wrap(retriggertracker, 0, 9)
-              end
-            end
-          elseif params:string("same_note_behavior") == "separate" then
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
-          end
-        end
-      end
-      start_note(e.id, note_num, detune)
-      currently_playing[e.id] = e
-      nvoices = nvoices + 1
-    else
-      print("maximum voices reached")
-    end
-  else
-    if held_notes[e.id] ~= nil then
-      return
-    end
-
-    currently_playing[e.id] = nil
-
-    --if in retrigger mode, only stop note if no other sources are playing it
-    if params:string("same_note_behavior") == "retrigger" then
-      id = e.id .. ""
-      note_hash = id:sub(1,-3)
-      detune = 0
-      for id2,e2 in pairs(currently_playing) do
-        id2 = id2 .. ""
-        note_hash2 = id2:sub(1,-3)
-        if note_hash == note_hash2 then
-          return -- if another source is playing the note, don't stop engine
-        end
-      end
-
-      --since no instances of same note are playing, stop any possible instance of the note
-      for i=0,99 do
-        engine.stop(note_hash*100+i)
-      end
-    end
-
-    engine.stop(e.id)
-    nvoices = nvoices - 1
-  end
-end
-
-pattern_note = function(e)
-  if e.starter == true then
-    return
-  elseif e.syncer then
-    if e.n == 1 and stoparm1 ~= true then
-      reset_clock_id1 = clock.run(pattern1_reset_sync)
-    elseif e.n == 2 and stoparm2 ~= true then
-      reset_clock_id2 = clock.run(pattern2_reset_sync)
-    end
-
-    return
-  end
-
-  local note_num = matrix_coord_to_note_num(e.x, e.y)
-  if e.state > 0 then
-    if nvoices < MAX_NUM_VOICES then
-      id = e.id .. ""
-      note_hash = id:sub(1,-3)
-      detune = 0
-      for id2,e2 in pairs(currently_playing) do
-        id2 = id2 .. ""
-        note_hash2 = id2:sub(1,-3)
-        if note_hash == note_hash2 then
-          if params:string("same_note_behavior") == "ignore" then
-            return
-          elseif params:string("same_note_behavior") == "detuned" then
-            detune = math.random(-1, 1) * 3
-
-            -- if note already being played is from same source, change id to not conflict
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end
-          elseif params:string("same_note_behavior") == "retrigger" then
-            -- stop engine from playing any instance of same note, but leave note in currently_playing
-            for i=0,99 do
-              engine.stop(note_hash2*100+i)
-            end
-            nvoices = nvoices - 1
-
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                retriggertracker = retriggertracker + 1
-                e.id = e.id + util.wrap(retriggertracker, 0, 9)
-              end
-            end
-          elseif params:string("same_note_behavior") == "separate" then
-            if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
-          end
-        end
-      end
-      start_note(e.id, note_num, detune)
-      currently_playing[e.id] = e
-      nvoices = nvoices + 1
-    else
-      print("maximum voices reached")
-    end
-  else
-    currently_playing[e.id] = nil
-
-    --if in retrigger mode, only stop note if no other sources are playing it
-    if params:string("same_note_behavior") == "retrigger" then
-      id = e.id .. ""
-      note_hash = id:sub(1,-3)
-      detune = 0
-      for id2,e2 in pairs(currently_playing) do
-        id2 = id2 .. ""
-        note_hash2 = id2:sub(1,-3)
-        if note_hash == note_hash2 then
-          return -- if another source is playing the note, don't stop engine
-        end
-      end
-
-      --since no instances of same note are playing, stop any possible instance of the note
-      for i=0,99 do
-        engine.stop(note_hash*100+i)
-      end
-    end
-
-    engine.stop(e.id)
-    nvoices = nvoices - 1
-  end
-end
-
-gridredraw = function()
-  --g:all(0)
-
-  for x=1,16 do 
-    for y=1,8 do
-      if true then
-        --if grid_led[x][y].dirty then
-        if grid_led[x][y].add ~= nil then
-          grid_led_add(x, y, grid_led[x][y].add)
-        end
-
-        g:led(x,y,grid_led[x][y].level)
-      end
-    end
-  end
-
-  g:refresh()
 end
 
 function enc(n,delta)
@@ -1298,102 +1398,7 @@ function key(n,z)
   redraw()
 end
 
-metronome = function()
-  while true do
-    clock.sync(divnum / divdenom)
-    if grid_metro_flash then
-      grid_metro_level = 4
-    end
-
-    softcut.position(1,0)
-  end
-end
-
-function redraw()
-  screen.clear()
-  screen.aa(0)
-  screen.line_width(1)
-
-  screen.move(1,5)
-  screen.level(4)
-  screen.text("bpm: ".. bpm)
-
-  if metrorun == 1 then
-    screen.level(15)
-  end
-  screen.move(50,5)
-  screen.text("div: " .. divnum .. "/" .. divdenom)
-
-  if enc_control == 0 then
-    screen.level(15)
-  else
-    screen.level(4)
-  end
-  screen.move(1,14)
-  screen.text("amp atk: " .. params:string("ampatk"))
-  screen.move(1,23)
-  screen.text("amp rel: " .. params:string("amprel"))
-  screen.move(1,32)
-  screen.text("cut: " .. params:string("cut"))
-
-  if enc_control == 1 then
-    screen.level(15)
-  else
-    screen.level(4)
-  end
-  screen.move(1,41)
-  screen.text("shape: " .. params:string("shape"))
-  screen.move(1, 50)
-  screen.text("timbre: " .. params:string("timbre")) 
-  screen.move(1,59)
-  screen.text("noise: " .. params:string("noise"))
-
-  if enc_control == 2 then
-    screen.level(15)
-  else
-    screen.level(4)
-  end
-  screen.move(64,16)
-  if pattern1_sync == false then
-    screen.text("p1 tf: " .. params:get("pat1tf"))
-  elseif pattern1_sync == "clock" then
-    screen.text("p1 tf: " .. params:get("pat1synctfn") .. " / " .. params:get("pat1synctfd"))
-  end
-
-  screen.move(64,25)
-  if pattern2_sync == false then
-    screen.text("p2 tf: " .. params:get("pat2tf"))
-  elseif pattern2_sync == "clock" then
-    screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
-  end
-
-  -- --draw metronome visualizer
-  -- screen.level(14)
-  -- screen.move(88,4)
-  -- screen.line_width(1)
-  -- screen.line(112,4)
-  -- screen.stroke()
-
-  current_beat_offset = clock.get_beats() % 1
-  -- --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
-  -- screen.level(15)
-  -- screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
-  -- screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
-  -- -- screen.move(107 + current_beat_offset * 19,0)
-  -- -- screen.line(107 + current_beat_offset * 19,7)
-  -- screen.stroke()
-
-  -- screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
-  -- screen.rect(111,0,7,7)
-  -- screen.fill()
-
-  screen.level(math.floor((1 - current_beat_offset)^2 * 14))
-  screen.circle(114,7,4)
-  screen.fill()
-
-  screen.update()
-end
-
+--- INIT
 function init()
   pat1 = pattern_time.new()
   pat1.process = pattern_note
