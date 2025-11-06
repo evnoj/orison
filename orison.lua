@@ -5,13 +5,15 @@ local music = require 'musicutil'
 local polysub = require 'polysub'
 
 local g = grid.connect()
+local grid_connected = g.device~= nil and true or false
+local cols = grid_connected and g.device.cols or 16
+local rows = grid_connected and g.device.rows or 8
 
-grid_led = 1
-grid_presses = 1
+local grid_led,grid_presses
 
-currently_playing = {}
+local currently_playing = {}
 local enc_control = 0
-pressed_notes = {}
+local pressed_notes = {}
 local held_notes = {}
 local holding = false
 local bpm = clock.get_tempo()
@@ -26,12 +28,11 @@ local pattern2_timefactor = 1
 local pattern2_basebpm = nil
 local pattern2_synctf_num = 1
 local pattern2_synctf_denom = 1
-clockids = {}
 
-local visual_refresh_rate = 120
+local grid_refresh_rate = 60
 local screen_refresh_metro
 
-local MAX_NUM_VOICES = 100
+local max_voices = 100
 
 local options = {
   same_note_behavior = {"retrigger", "detuned", "ignore", "separate"}
@@ -47,9 +48,13 @@ engine.name = 'PolySub'
 
 -- current count of active voices
 local nvoices = 0
-
 local grid_window = {x = 5, y = 14}
-lighting_over_time = {mod = {}, fixed = {}}
+local grid_window_transpose_indicator_nums = {21, 7}
+if rows == 16 then
+  grid_window.y = 18
+  grid_window_transpose_indicator_nums = {25,11}
+end
+local lighting_over_time = {mod = {}, fixed = {}}
 local row_interval = 5
 local metrokey = false
 local metrorun = 0
@@ -58,7 +63,7 @@ local divnum = 1
 local divdenom = 1
 local k1 = false
 local ctrlkey = false
-local file = _path.dust.."audio/metro-tick.wav"
+local metronome_sound = _path.dust.."audio/metro-tick.wav"
 local retriggertracker = 0
 local patterns = {}
 local pattern1_sync = false
@@ -71,10 +76,6 @@ local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","p
 
 -- forward declare functions
 local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern1_start_sync,pattern2_start_sync,pattern1_reset_sync,pattern2_reset_sync,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
-
-note_hasher = function(x,y)
-  return y*40 + x
-end
 
 tempo_change_handler = function(tempo)
   if bpm ~= tempo then
@@ -209,7 +210,7 @@ end
 matrix_note = function(e)
   local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
-    if nvoices < MAX_NUM_VOICES then
+    if nvoices < max_voices then
       id = e.id .. ""
       note_hash = id:sub(1,-3)
       detune = 0
@@ -312,7 +313,7 @@ pattern_note = function(e)
 
   local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
-    if nvoices < MAX_NUM_VOICES then
+    if nvoices < max_voices then
       id = e.id .. ""
       note_hash = id:sub(1,-3)
       detune = 0
@@ -792,8 +793,8 @@ lighting_update_handler = function()
   grid_led_clear()
 
   -- light c notes
-  for x = 2,16,1 do
-    for y = 1,8,1 do
+  for x = 2,cols,1 do
+    for y = 1,rows,1 do
       if grid_to_note_num(x,y) == 60 then
         grid_led_set(x,y,7)
       elseif grid_to_note_num(x,y) % 12 == 0 then
@@ -803,8 +804,10 @@ lighting_update_handler = function()
   end
 
   -- light transpose keys
-  grid_led_set(1, 1, math.floor((grid_window.y - 7) / 2))
-  grid_led_set(1, 2, math.floor((21 - grid_window.y) / 2))
+  grid_led_set(1, 1, math.floor((grid_window.y - grid_window_transpose_indicator_nums[2]) / 2))
+  grid_led_set(1, 2, math.floor((grid_window_transpose_indicator_nums[1] - grid_window.y) / 2))
+  -- grid_led_set(1, 1, math.floor((grid_window.y - grid_window_transpose_indicator_nums[2]) / 2))
+  -- grid_led_set(1, 2, math.floor((21 - grid_window_transpose_indicator_nums[1]) / 2))
 
   for id,e in pairs(currently_playing) do
     note_info = note_id_to_info(id)
@@ -860,7 +863,7 @@ lighting_update_handler = function()
           obj.dir = -1
         end
       elseif obj.current == obj.range then
-        obj.dir = -1        
+        obj.dir = -1
 
         if obj.shape == "rise" then
           obj.current = 0
@@ -878,9 +881,9 @@ end
 grid_led_array_init = function()
   init_grid = {}
 
-  for x=1,16 do
+  for x=1,cols do
     init_grid[x] = {}
-    for y=1,8 do
+    for y=1,rows do
       init_grid[x][y] = {level = 0, dirty = false}
     end
   end
@@ -891,7 +894,7 @@ end
 grid_led_set = function(x, y, level)
   level = util.clamp(level,0,15)
 
-  if x < 1 or x > 16 or y < 1 or y > 8 or level == grid_led[x][y].level then
+  if x < 1 or x > cols or y < 1 or y > rows or level == grid_led[x][y].level then
     return
   else
     grid_led[x][y].level = level
@@ -900,7 +903,7 @@ grid_led_set = function(x, y, level)
 end
 
 grid_led_add = function(x, y, val)
-  if val == 0 or x < 1 or x > 16 or y < 1 or y > 8 then
+  if val == 0 or x < 1 or x > cols or y < 1 or y > rows then
     return
   end
 
@@ -916,8 +919,8 @@ grid_led_add = function(x, y, val)
 end
 
 grid_led_clear = function()
-  for x=1,16 do
-    for y=1,8 do
+  for x=1,cols do
+    for y=1,rows do
       grid_led[x][y].level = 0
       grid_led[x][y].dirty = true
     end
@@ -925,17 +928,16 @@ grid_led_clear = function()
 end
 
 gridredraw = function()
-  --g:all(0)
+  for x=1,cols do
+    for y=1,rows do
+      if grid_led[x][y].add ~= nil then
+        grid_led_add(x, y, grid_led[x][y].add)
+      end
 
-  for x=1,16 do 
-    for y=1,8 do
-      if true then
-        --if grid_led[x][y].dirty then
-        if grid_led[x][y].add ~= nil then
-          grid_led_add(x, y, grid_led[x][y].add)
-        end
-
+      -- if true then
+      if grid_led[x][y].dirty then
         g:led(x,y,grid_led[x][y].level)
+        grid_led[x][y].dirty = false
       end
     end
   end
@@ -947,9 +949,9 @@ create_fixed_pulse = function(x, y, pmin, pmax, rate, shape)
   pulse = {x = x, y = y, pmin = pmin, pmax = pmax, rate = rate, current = pmin, dir = 1, mode = "fixed", shape = shape}
 
   if shape == "wave" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*(pmax - pmin)))
+    pulse.frames_per_step = math.floor(0.5 + rate * grid_refresh_rate / (2*(pmax - pmin)))
   elseif shape == "rise" or shape == "fall" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (pmax - pmin))
+    pulse.frames_per_step = math.floor(0.5 + rate * grid_refresh_rate / (pmax - pmin))
 
     if shape == "fall" then
       pulse.dir = -1
@@ -973,9 +975,9 @@ create_mod_pulse = function(range, rate, note_id, shape)
   pulse = {range = range, current = 0, dir = 1, mode = "mod", note_id = note_id, shape = shape}
 
   if shape == "wave" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / (2*range))
+    pulse.frames_per_step = math.floor(0.5 + rate * grid_refresh_rate / (2*range))
   elseif shape == "rise" or shape == "fall" then
-    pulse.frames_per_step = math.floor(0.5 + rate * visual_refresh_rate / range)
+    pulse.frames_per_step = math.floor(0.5 + rate * grid_refresh_rate / range)
 
     if shape == "fall" then
       pulse.dir = -1
@@ -991,8 +993,6 @@ end
 
 function redraw()
   screen.clear()
-  screen.aa(0)
-  screen.line_width(1)
 
   screen.move(1,5)
   screen.level(4)
@@ -1047,25 +1047,7 @@ function redraw()
     screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
   end
 
-  -- --draw metronome visualizer
-  -- screen.level(14)
-  -- screen.move(88,4)
-  -- screen.line_width(1)
-  -- screen.line(112,4)
-  -- screen.stroke()
-
   current_beat_offset = clock.get_beats() % 1
-  -- --screen.level(math.floor(.5 + current_beat_offset^2 * 15))
-  -- screen.level(15)
-  -- screen.move(88 + current_beat_offset * 23, 2.5 - current_beat_offset * 2.5)
-  -- screen.line(88 + current_beat_offset * 23, 4.5 + current_beat_offset * 2.5)
-  -- -- screen.move(107 + current_beat_offset * 19,0)
-  -- -- screen.line(107 + current_beat_offset * 19,7)
-  -- screen.stroke()
-
-  -- screen.level(math.floor((1 - current_beat_offset)^2 * 13) + 1)
-  -- screen.rect(111,0,7,7)
-  -- screen.fill()
 
   screen.level(math.floor((1 - current_beat_offset)^2 * 14))
   screen.circle(114,7,4)
@@ -1075,6 +1057,10 @@ function redraw()
 end
 
 --- UTILS
+note_hasher = function(x,y)
+  return y*40 + x
+end
+
 note_id_to_info = function(id)
   id = id .. ""
   note_hash = id:sub(1,-3)
@@ -1103,9 +1089,9 @@ end
 grid_press_array_init = function()
   init_grid = {}
 
-  for x=1,16 do
+  for x=1,cols do
     init_grid[x] = {}
-    for y=1,8 do
+    for y=1,rows do
       init_grid[x][y] = 0
     end
   end
@@ -1492,8 +1478,10 @@ function init()
     lighting_update_handler()
     gridredraw()
   end
-  grid_refresh_metro:start(1 / visual_refresh_rate)
+  grid_refresh_metro:start(1 / grid_refresh_rate)
 
+  screen.aa(0)
+  screen.line_width(1)
   screen_refresh_metro = metro.init()
   screen_refresh_metro.event = function(stage)
     redraw()
@@ -1503,7 +1491,7 @@ function init()
   metroid = clock.run(metronome)
 
   softcut.buffer_clear()
-  softcut.buffer_read_mono(file,0,0,-1,1,1)
+  softcut.buffer_read_mono(metronome_sound,0,0,-1,1,1)
 
   softcut.enable(1,1)
   softcut.buffer(1,1)
