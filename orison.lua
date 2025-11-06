@@ -806,8 +806,6 @@ lighting_update_handler = function()
   -- light transpose keys
   grid_led_set(1, 1, math.floor((grid_window.y - grid_window_transpose_indicator_nums[2]) / 2))
   grid_led_set(1, 2, math.floor((grid_window_transpose_indicator_nums[1] - grid_window.y) / 2))
-  -- grid_led_set(1, 1, math.floor((grid_window.y - grid_window_transpose_indicator_nums[2]) / 2))
-  -- grid_led_set(1, 2, math.floor((21 - grid_window_transpose_indicator_nums[1]) / 2))
 
   for id,e in pairs(currently_playing) do
     note_info = note_id_to_info(id)
@@ -1384,36 +1382,47 @@ function init()
   patterns[2].pattern = pat2
   patterns[2].sync = false
 
+  params:add_separator("top_sep", "control")
   params:add_option("enc1","enc1", enc_control_options, 4)
   params:add_option("enc2","enc2", enc_control_options, 5)
   params:add_option("enc3","enc3", enc_control_options, 6)
+  params:hide("enc1")
+  params:hide("enc2")
+  params:hide("enc3")
   params:add_option("same_note_behavior", "same note behavior", options.same_note_behavior, 2)
-  tf_control = controlspec.new(.01,100,'lin',.01,1,'x time',0.0001,false)
+
+  local tf_control = controlspec.def{
+    min = .01,
+    max = 10,
+    warp = 'exp',
+    step = .001,
+    default = 1,
+    units = 'x time',
+    quantum = 0.005,
+    wrap = false
+  }
   params:add_control("pat1tf","pattern1 timef",tf_control)
   params:add_control("pat2tf","pattern2 timef",tf_control)
-  tf_mult_control = controlspec.new(1,64,'lin',1,1)
-  params:add_control("pat1synctfn","pattern 1 sync numer",tf_mult_control)
-  params:add_control("pat1synctfd","pattern 1 sync denom",tf_mult_control)
-  params:add_control("pat2synctfn","pattern 2 sync numer",tf_mult_control)
-  params:add_control("pat2synctfd","pattern 2 sync denom",tf_mult_control)
-  params:hide("pat1tf")
-  params:hide("pat2tf")
-  params:hide("pat1synctfn")
-  params:hide("pat1synctfd")
-  params:hide("pat2synctfn")
-  params:hide("pat2synctfd")
+  params:add_number("pat1synctfn","pattern 1 sync numer",1,64,1)
+  params:add_number("pat1synctfd","pattern 1 sync denom",1,64,1)
+  params:add_number("pat2synctfn","pattern 2 sync numer",1,64,1)
+  params:add_number("pat2synctfd","pattern 2 sync denom",1,64,1)
 
   params:set_action("pat1tf", function(tf)
-    pat1:set_time_factor(tf)
+    if not pattern1_sync then
+      pat1:set_time_factor(tf)
+    end
   end)
 
   params:set_action("pat2tf", function(tf)
-    pat2:set_time_factor(tf)
+    if not pattern2_sync then
+      pat2:set_time_factor(tf)
+    end
   end)
 
   params:set_action("pat1synctfn", function(n)
     if pattern1_sync == "clock" then
-      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+      pat1:set_time_factor("pat1tf",(pattern1_basebpm / bpm) * (n / params:get("pat1synctfd")))
       if reset_clock_id1 ~= nil then
         clock.cancel(reset_clock_id1)
         --reset_clock_id1 = clock.run(pattern1_reset_sync)
@@ -1422,9 +1431,9 @@ function init()
     end
   end)
 
-  params:set_action("pat1synctfd", function(n)
+  params:set_action("pat1synctfd", function(d)
     if pattern1_sync == "clock" then
-      params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
+      pat1:set_time_factor("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / d))
       if reset_clock_id1 ~= nil then
         clock.cancel(reset_clock_id1)
         --reset_clock_id1 = clock.run(pattern1_reset_sync)
@@ -1435,7 +1444,7 @@ function init()
 
   params:set_action("pat2synctfn", function(n)
     if pattern2_sync == "clock" then
-      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+      pat2:set_time_factor("pat2tf",(pattern2_basebpm / bpm) * (n / params:get("pat2synctfd")))
       if reset_clock_id2 ~= nil then
         clock.cancel(reset_clock_id2)
         reset_clock_id2 = clock.run(pattern2_reset_sync)
@@ -1443,9 +1452,9 @@ function init()
     end
   end)
 
-  params:set_action("pat2synctfd", function(n)
+  params:set_action("pat2synctfd", function(d)
     if pattern2_sync == "clock" then
-      params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+      pat2:set_time_factor("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / d))
       if reset_clock_id2 ~= nil then
         clock.cancel(reset_clock_id2)
         reset_clock_id2 = clock.run(pattern2_reset_sync)
@@ -1460,14 +1469,10 @@ function init()
     tempo_change_handler(x)
   end
 
-  params:add_separator()
-
+  params:add_separator("polysub_sep", "polysub")
   polysub:params()
 
-  params:add_separator()
-
   engine.stopAll()
-
   params:bang()
 
   grid_led = grid_led_array_init()
@@ -1483,7 +1488,7 @@ function init()
   screen.aa(0)
   screen.line_width(1)
   screen_refresh_metro = metro.init()
-  screen_refresh_metro.event = function(stage)
+  screen_refresh_metro.event = function()
     redraw()
   end
   screen_refresh_metro:start(1/60)
