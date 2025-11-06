@@ -67,8 +67,6 @@ local stoparm1 = false
 local pattern2_sync = false
 local reset_clock_id2 = nil
 local stoparm2 = false
-local grid_metro_level = 0
-local grid_metro_flash = false
 local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1tf","pat1synctfn","pat1synctfd","pat2tf","pat2synctfn","pat2synctfd","clock_tempo"}
 
 -- forward declare functions
@@ -293,9 +291,6 @@ end
 metronome = function()
   while true do
     clock.sync(divnum / divdenom)
-    if grid_metro_flash then
-      grid_metro_level = 4
-    end
 
     softcut.position(1,0)
   end
@@ -822,7 +817,7 @@ lighting_update_handler = function()
     end
 
     if e.pulser ~= nil then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, e.pulser.current) 
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, e.pulser.current)
     end
   end
 
@@ -876,14 +871,6 @@ lighting_update_handler = function()
       obj.frametrack = obj.frames_per_step
     end
   end
-
-  for x=1,16 do
-    for y=1,8 do
-      grid_led_add(x,y,grid_metro_level)
-    end
-  end
-
-  grid_metro_level = util.clamp(grid_metro_level - 1, 0, 15)
 
   gridredraw()
 end
@@ -1343,7 +1330,6 @@ function key(n,z)
       softcut.level(1, 0)
     end
   elseif n == 2 and z == 1 then
-    if ctrlkey then grid_metro_flash = not grid_metro_flash end
     if enc_control == 2 then
       if params:get("enc1") == 8 then
         params:set("enc1",11)
