@@ -19,6 +19,7 @@ function eloop.new()
   i.time_total = 0
   i.count = 0
   i.step = 0
+  i.reps = 0
   i.time_factor = 1
   i.sync = false
   i.sync_div = 1 -- beat on which to start/stop recording
@@ -33,6 +34,14 @@ function eloop.new()
     rec_stop = nil,
     rec_start = nil,
     play_start = nil
+  }
+
+  -- callbacks to do things, mainly for when synced
+  i.callbacks = {
+    rec_start = function() end,
+    rec_stop = function() end,
+    start = function() end,
+    stop = function() end,
   }
 
   i.process = function(_) print("event") end
@@ -63,14 +72,19 @@ end
 --- start recording
 function eloop:rec_start()
   if not self.sync then
-    self.rec = 1
+    self:_rec_start()
   elseif not self.clocks.rec_start then
     self.clocks.rec_start = clock.run(function()
       clock.sync(self.sync_div)
-      self.rec = 1
+      self:_rec_start()
       self.clocks.rec_start = nil
     end)
   end
+end
+
+function eloop:_rec_start()
+  self.rec = 1
+  self.callbacks.rec_start()
 end
 
 --- stop recording
@@ -102,6 +116,8 @@ function eloop:_rec_stop()
   else
     print("pattern_time: no events recorded")
   end
+
+  self.callbacks.rec_stop()
 end
 
 --- watch
@@ -150,9 +166,13 @@ function eloop:start()
       self.process(self.event[1])
       self.play = 1
       self.step = 1
+      self.reps = 0
       self.metro.time = self.time[1] * self.time_factor
       self.metro:start()
+
+      self.callbacks.start()
     else
+      self.reps = 0
       self.clocks.syncer = clock.run(self:make_syncer())
     end
   end
@@ -163,6 +183,7 @@ function eloop:next_event()
   self.prev_time = util.time()
   if self.step == self.count then
     self.step = 1
+    self.reps = self.reps + 1
   else
     self.step = self.step + 1
   end
@@ -184,9 +205,11 @@ function eloop:stop()
       self.play = 0
       self.overdub = 0
       self.metro:stop()
-    else
+      self.callbacks.stop()
+    elseif self.clocks.syncer then
       -- let pattern finish naturally
       clock.cancel(self.clocks.syncer)
+      self.clocks.syncer = nil
     end
   else print("pattern_time: not playing") end
 end
@@ -211,6 +234,11 @@ function eloop:make_syncer()
     self.overdub = 0
     self.metro:stop()
 
+    -- if not restarting, perform stop callback
+    if not self.clocks.syncer then
+      self.stop_callback()
+    end
+
     -- then restart
     self.prev_time = util.time()
     self.process(self.event[1])
@@ -218,6 +246,10 @@ function eloop:make_syncer()
     self.step = 1
     self.metro.time = self.time[1] * self.time_factor
     self.metro:start()
+
+    if self.reps == 0 then
+      self.callbacks.start()
+    end
   end
 end
 
