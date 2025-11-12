@@ -23,6 +23,8 @@ function eloop.new()
   i.time_factor = 1
   i.sync = false
   i.sync_div = 1 -- beat on which to start/stop recording
+  i.resync = false -- means when reaching end of loop, need to remake clock syncer
+  -- don't set directly, use set_time_factor_sync methods
   i.time_factor_sync_mult = 1
   i.time_factor_sync_div = 1
 
@@ -38,8 +40,12 @@ function eloop.new()
 
   -- callbacks to do things, mainly for when synced
   i.callbacks = {
+    -- after record start
     rec_start = function() end,
-    rec_stop = function() end,
+    -- before record stop, only if anything was recorded
+    rec_stop_pre = function() end,
+    -- after record stop, whether anything was recorded or not
+    rec_stop_post = function() end,
     start = function() end,
     stop = function() end,
   }
@@ -58,13 +64,46 @@ function eloop:clear()
   self.prev_time = 0
   self.event = {}
   self.time = {}
+  self.time_total = 0
   self.count = 0
   self.step = 0
   self.time_factor = 1
+  self.time_factor_sync_mult = 1
+  self.time_factor_sync_div = 1
 end
 
 --- adjust the time factor of this pattern.
 -- @tparam number f time factor
+function eloop:set_time_factor(f)
+  self.time_factor = f or 1
+end
+
+function eloop:set_time_factor_sync_mult(i)
+  if i ~= math.floor(i) then
+    error("Time factor synced multiplier must be an integer")
+  end
+
+  self.time_factor_sync_mult = i
+
+  if self.clocks.syncer then
+    clock.cancel(self.clocks.syncer)
+    self.resync = true
+  end
+end
+
+function eloop:set_time_factor_sync_div(i)
+  if i ~= math.floor(i) then
+    error("Time factor synced divider must be an integer, i:"..i..", math.floor(i):"..math.floor(i))
+  end
+
+  self.time_factor_sync_div = i
+
+  if self.clocks.syncer then
+    clock.cancel(self.clocks.syncer)
+    self.resync = true
+  end
+end
+
 function eloop:set_time_factor(f)
   self.time_factor = f or 1
 end
@@ -106,6 +145,7 @@ end
 function eloop:_rec_stop()
   self.rec = 0
   if self.count ~= 0 then
+    self.callbacks.rec_stop_pre()
     --print("count "..self.count)
     local t = self.prev_time
     self.prev_time = util.time()
@@ -117,7 +157,7 @@ function eloop:_rec_stop()
     print("pattern_time: no events recorded")
   end
 
-  self.callbacks.rec_stop()
+  self.callbacks.rec_stop_post()
 end
 
 --- watch
@@ -178,12 +218,46 @@ function eloop:start()
   end
 end
 
+--- stop this pattern
+function eloop:stop()
+  if self.play ~= 1 then
+    print("pattern_time: not playing")
+    return
+  end
+
+  if not self.sync then
+    self.play = 0
+    self.overdub = 0
+    self.metro:stop()
+    self.callbacks.stop()
+
+    if self.clocks.syncer then
+      clock.cancel(self.clocks.syncer)
+      self.clocks.syncer = nil
+    end
+  elseif self.clocks.syncer then
+    -- if syncing, wait for the stop to finish naturally
+    self.clocks.syncer = nil
+  end
+end
+
 --- process next event
 function eloop:next_event()
   self.prev_time = util.time()
   if self.step == self.count then
     self.step = 1
     self.reps = self.reps + 1
+
+    if self.resync then
+      self.resync = false
+
+      if not self.clocks.syncer then -- means we're stopping
+        self.callbacks.stop()
+        return
+      else
+        self.clocks.syncer = clock.run(self:make_syncer())
+      end
+    end
   else
     self.step = self.step + 1
   end
@@ -198,22 +272,6 @@ function eloop:next_event()
   self.metro:start()
 end
 
---- stop this pattern
-function eloop:stop()
-  if self.play == 1 then
-    if not self.sync then
-      self.play = 0
-      self.overdub = 0
-      self.metro:stop()
-      self.callbacks.stop()
-    elseif self.clocks.syncer then
-      -- let pattern finish naturally
-      clock.cancel(self.clocks.syncer)
-      self.clocks.syncer = nil
-    end
-  else print("pattern_time: not playing") end
-end
-
 --- set overdub
 function eloop:set_overdub(s)
   if s==1 and self.play == 1 and self.rec == 0 then
@@ -226,29 +284,35 @@ end
 -- need to capture reference to self in closure to access self from clock
 function eloop:make_syncer()
   return function()
-    -- on the beat div
-    clock.sync(self.time_total / clock.get_beat_sec())
+    while true do
+      -- on the beat div
+      local div = self.time_factor_sync_mult / self.time_factor_sync_div
+      local t = math.floor(0.5 + self.time_total / (clock.get_beat_sec() * div) )
+      -- clock.sync((self.time_total / clock.get_beat_sec()) * (self.time_factor_sync_mult / self.time_factor_sync_div))
+      clock.sync(t * div)
 
-    -- stop
-    self.play = 0
-    self.overdub = 0
-    self.metro:stop()
+      -- stop
+      self.play = 0
+      self.overdub = 0
+      self.metro:stop()
 
-    -- if not restarting, perform stop callback
-    if not self.clocks.syncer then
-      self.stop_callback()
-    end
+      -- if not restarting, perform stop callback
+      if not self.clocks.syncer then
+        self.callbacks.stop()
+        break
+      end
 
-    -- then restart
-    self.prev_time = util.time()
-    self.process(self.event[1])
-    self.play = 1
-    self.step = 1
-    self.metro.time = self.time[1] * self.time_factor
-    self.metro:start()
+      -- then restart
+      self.prev_time = util.time()
+      self.process(self.event[1])
+      self.play = 1
+      self.step = 1
+      self.metro.time = self.time[1] * self.time_factor
+      self.metro:start()
 
-    if self.reps == 0 then
-      self.callbacks.start()
+      if self.reps == 0 then
+        self.callbacks.start()
+      end
     end
   end
 end
