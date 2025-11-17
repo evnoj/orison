@@ -1,5 +1,3 @@
-dbg = require 'tools.debugger'
-dbg = function() end
 inspect= require 'tools.inspect'
 local pattern_time = require 'pattern_time'
 local music = require 'musicutil'
@@ -13,11 +11,10 @@ local cols = grid_connected and g.device.cols or 16
 local rows = grid_connected and g.device.rows or 8
 
 -- forward declare functions
-local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,lighting_update_handler,grid_led_set,grid_led_add,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
--- local clearn_pattern_notes,get_digit
+local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,lighting_update_handler,grid_led_set,grid_led_add,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome,clear_pattern_notes,get_digit
 
 local grid_led,grid_presses
-currently_playing = {}
+local currently_playing = {}
 local enc_control = 0
 local pressed_notes = {}
 local held_notes = {}
@@ -61,7 +58,7 @@ local ctrlkey = false
 local metronome_sound = _path.code.."orison/metronome-tick.wav"
 local retriggertracker = 0
 
-patterns = {}
+local patterns = {}
 
 local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1_tf","pat1_tf_sync_m","pat1_tf_sync_d","pat2_tf","pat2_tf_sync_m","pat2_tf_sync_d","clock_tempo"}
 
@@ -152,13 +149,17 @@ clear_all_notes = function()
 end
 
 clear_pattern_notes = function(pattern_t)
-  dbg()
+  local notes_to_clear = {}
   for id,e in pairs(currently_playing) do
     if get_digit(id, 2) == sources[pattern_t.source_id] then
-      e.state = 0
-      matrix_note(e)
-      -- e.state = 1
+      notes_to_clear[id] = e
     end
+  end
+
+  for id,e in pairs(notes_to_clear) do
+    currently_playing[e.id] = nil
+    engine.stop(e.id)
+    nvoices = nvoices - 1
   end
 end
 
@@ -189,9 +190,7 @@ matrix_note = function(e)
 
             -- if note already being played is from same source, change id to not conflict
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
+              e.id = get_nonconflicting_id(e.id)
             end
           elseif params:string("same_note_behavior") == "retrigger" then
             -- stop engine from playing any instance of same note, but leave note in currently_playing
@@ -208,10 +207,8 @@ matrix_note = function(e)
             end
           elseif params:string("same_note_behavior") == "separate" then
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
+              e.id = get_nonconflicting_id(e.id)
+            end
           end
         end
       end
@@ -277,13 +274,13 @@ pattern_note = function(e)
           if params:string("same_note_behavior") == "ignore" then
             return
           elseif params:string("same_note_behavior") == "detuned" then
-            detune = math.random(-1, 1) * 3
+            detune = (math.random() + 1) * (math.random(0, 1) * 2 - 1)
 
             -- if note already being played is from same source, change id to not conflict
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
+              -- print("before: "..e.id)
+              e.id = get_nonconflicting_id(e.id)
+              -- print("after: "..e.id)
             end
           elseif params:string("same_note_behavior") == "retrigger" then
             -- stop engine from playing any instance of same note, but leave note in currently_playing
@@ -300,10 +297,8 @@ pattern_note = function(e)
             end
           elseif params:string("same_note_behavior") == "separate" then
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
+              e.id = get_nonconflicting_id(e.id)
+            end
           end
         end
       end
@@ -781,6 +776,24 @@ note_id_to_info = function(id)
   return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
 end
 
+get_nonconflicting_id = function(id)
+  local ceil = (math.ceil(id/10) + 1) * 10
+  local new_id = id
+  while currently_playing[new_id] ~= nil do
+    new_id = id + 1
+
+    if id == ceil then
+      id = ceil - 10
+    end
+
+    if new_id == id then
+      error("Unable to obtain nonconflicting id for id "..id)
+    end
+  end
+
+  return new_id
+end
+
 get_digit = function(num, digit)
   local n = 10 ^ digit
   local n1 = 10 ^ (digit - 1)
@@ -1039,6 +1052,12 @@ function init()
   end
   patterns[1].led_level = 8
   patterns[2].led_level = 3
+  patterns[1].pattern.callbacks.loop = function()
+    clear_pattern_notes(patterns[1])
+  end
+  patterns[2].pattern.callbacks.loop = function()
+    clear_pattern_notes(patterns[2])
+  end
 
 
   params:add_separator("top_sep", "control")

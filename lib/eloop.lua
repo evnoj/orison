@@ -19,9 +19,9 @@ function eloop.new()
   i.time_total = 0
   i.count = 0
   i.step = 0
-  i.reps = 0
   i.time_factor = 1
   i.sync = false
+  i.sync_offset = 0
   i.sync_div = 1 -- beat on which to start/stop recording
   i.resync = false -- means when reaching end of loop, need to remake clock syncer
   -- don't set directly, use set_time_factor_sync methods
@@ -48,11 +48,16 @@ function eloop.new()
     rec_stop_post = function() end,
     start = function() end,
     stop = function() end,
+    loop = function() end, -- called at the end of a loop
   }
 
   i.process = function(_) print("event") end
 
   return i
+end
+
+local function round(n)
+  return math.floor(0.5 + n)
 end
 
 --- clear this pattern
@@ -116,6 +121,7 @@ function eloop:rec_start()
     self.clocks.rec_start = clock.run(function()
       clock.sync(self.sync_div)
       self:_rec_start()
+      self:watch({_marker = true})
       self.clocks.rec_start = nil
     end)
   end
@@ -134,7 +140,15 @@ function eloop:rec_stop()
     elseif not self.clocks.rec_stop then
       self.clocks.rec_stop = clock.run(function()
         clock.sync(self.sync_div)
+
+        self:watch({_marker = true})
+
+        local time_of_div = clock.get_beat_sec() * self.sync_div
+        local num_of_div = round(self.time_total / time_of_div)
+        self.beat_len = num_of_div * self.sync_div
+
         self:_rec_stop()
+
         self.clocks.rec_stop = nil
       end)
     end
@@ -146,13 +160,11 @@ function eloop:_rec_stop()
   self.rec = 0
   if self.count ~= 0 then
     self.callbacks.rec_stop_pre()
-    --print("count "..self.count)
     local t = self.prev_time
     self.prev_time = util.time()
     local elapsed = self.prev_time - t
     self.time[self.count] = elapsed
     self.time_total = self.time_total + elapsed
-    --tab.print(self.time)
   else
     print("pattern_time: no events recorded")
   end
@@ -198,21 +210,30 @@ function eloop:overdub_event(e)
   self.count = self.count + 1
 end
 
+function eloop:update_offset()
+  local current_beat = clock.get_beats()
+  self.sync_offset = current_beat %
+    (self.time_factor_sync_mult/self.time_factor_sync_div * self.beat_len)
+end
 --- start the loop
 function eloop:start()
   if self.count > 0 then
-    if not self.sync then
-      self.prev_time = util.time()
-      self.process(self.event[1])
-      self.play = 1
-      self.step = 1
-      self.reps = 0
-      self.metro.time = self.time[1] * self.time_factor
-      self.metro:start()
+    self.prev_time = util.time()
+    self:_process(self.event[1])
+    self.play = 1
+    self.step = 1
 
-      self.callbacks.start()
+    if self.sync then
+      self.metro.time = self.time[1] * self.time_factor_sync_mult / self.time_factor_sync_div
     else
-      self.reps = 0
+      self.metro.time = self.time[1] * self.time_factor
+    end
+    self.metro:start()
+
+    self.callbacks.start()
+
+    if self.sync then
+      self:update_offset()
       self.clocks.syncer = clock.run(self:make_syncer())
     end
   end
@@ -246,7 +267,6 @@ function eloop:next_event()
   self.prev_time = util.time()
   if self.step == self.count then
     self.step = 1
-    self.reps = self.reps + 1
 
     if self.resync then
       self.resync = false
@@ -255,13 +275,14 @@ function eloop:next_event()
         self.callbacks.stop()
         return
       else
+        self:update_offset()
         self.clocks.syncer = clock.run(self:make_syncer())
       end
     end
   else
     self.step = self.step + 1
   end
-  self.process(self.event[self.step])
+  self:_process(self.event[self.step])
   local tf
   if not self.sync then
     tf = self.time_factor
@@ -281,15 +302,18 @@ function eloop:set_overdub(s)
   end
 end
 
+function eloop:_process(e)
+  if not e._marker then -- marker events are only for timing synchronization
+    self.process(e)
+  end
+end
+
 -- need to capture reference to self in closure to access self from clock
 function eloop:make_syncer()
   return function()
     while true do
-      -- on the beat div
-      local div = self.time_factor_sync_mult / self.time_factor_sync_div
-      local t = math.floor(0.5 + self.time_total / (clock.get_beat_sec() * div) )
-      -- clock.sync((self.time_total / clock.get_beat_sec()) * (self.time_factor_sync_mult / self.time_factor_sync_div))
-      clock.sync(t * div)
+      clock.sync(self.time_factor_sync_mult/self.time_factor_sync_div * self.beat_len,
+        self.sync_offset)
 
       -- stop
       self.play = 0
@@ -300,19 +324,17 @@ function eloop:make_syncer()
       if not self.clocks.syncer then
         self.callbacks.stop()
         break
+      else
+        self.callbacks.loop()
       end
 
       -- then restart
       self.prev_time = util.time()
-      self.process(self.event[1])
+      self:_process(self.event[1])
       self.play = 1
       self.step = 1
-      self.metro.time = self.time[1] * self.time_factor
+      self.metro.time = self.time[1] * self.time_factor_sync_mult / self.time_factor_sync_div
       self.metro:start()
-
-      if self.reps == 0 then
-        self.callbacks.start()
-      end
     end
   end
 end
