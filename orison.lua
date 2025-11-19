@@ -1,5 +1,4 @@
 inspect= require 'tools.inspect'
-local pattern_time = require 'pattern_time'
 local music = require 'musicutil'
 local eloop = include 'lib/eloop'
 
@@ -1049,16 +1048,13 @@ function init()
     p.source_id = "pattern"..i
 
     patterns[i] = p
+
+    p.pattern.callbacks.loop = function()
+      clear_pattern_notes(patterns[i])
+    end
   end
   patterns[1].led_level = 8
   patterns[2].led_level = 3
-  patterns[1].pattern.callbacks.loop = function()
-    clear_pattern_notes(patterns[1])
-  end
-  patterns[2].pattern.callbacks.loop = function()
-    clear_pattern_notes(patterns[2])
-  end
-
 
   params:add_separator("top_sep", "control")
   params:add_option("enc1","enc1", enc_control_options, 4)
@@ -1190,10 +1186,4 @@ end
 
 function reload()
   norns.script.load(norns.state.script)
-end
-
-function cleanup()
-  patterns[1].pattern:stop()
-  patterns[1].pattern:stop()
-  pat = nil
 end
