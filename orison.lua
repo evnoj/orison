@@ -1,6 +1,6 @@
-local tab = require 'tabutil'
-local pattern_time = require 'pattern_time'
+inspect= require 'tools.inspect'
 local music = require 'musicutil'
+local eloop = include 'lib/eloop'
 
 local polysub = require 'polysub'
 
@@ -9,35 +9,26 @@ local grid_connected = g.device~= nil and true or false
 local cols = grid_connected and g.device.cols or 16
 local rows = grid_connected and g.device.rows or 8
 
-local grid_led,grid_presses
+-- forward declare functions
+local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,lighting_update_handler,grid_led_set,grid_led_add,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome,clear_pattern_notes,get_digit
 
+local grid_led,grid_presses
 local currently_playing = {}
 local enc_control = 0
 local pressed_notes = {}
 local held_notes = {}
 local holding = false
 local bpm = clock.get_tempo()
-local pattern_1_led_level = 8
-local pattern_2_led_level = 3
 local holding_led_pulse_level = 4
-local pattern1_timefactor = 1
-local pattern1_basebpm = nil
-local pattern1_synctf_num = 1
-local pattern1_synctf_denom = 1
-local pattern2_timefactor = 1
-local pattern2_basebpm = nil
-local pattern2_synctf_num = 1
-local pattern2_synctf_denom = 1
-
 local grid_refresh_rate = 60
 local screen_refresh_metro
-
 local max_voices = 100
 
 local options = {
   same_note_behavior = {"retrigger", "detuned", "ignore", "separate"}
 }
 
+-- to identify the source of a currently playing note
 local sources = {
   pressed = 1,
   pattern1 = 2,
@@ -59,42 +50,25 @@ local row_interval = 5
 local metrokey = false
 local metrorun = 0
 local metrolevel = 6
-local divnum = 1
-local divdenom = 1
+local metronome_mult = 1
+local metronome_div = 1
 local k1 = false
 local ctrlkey = false
-local metronome_sound = _path.dust.."audio/metro-tick.wav"
+local metronome_sound = _path.code.."orison/metronome-tick.wav"
 local retriggertracker = 0
-local patterns = {}
-local pattern1_sync = false
-local reset_clock_id1 = nil
-local stoparm1 = false
-local pattern2_sync = false
-local reset_clock_id2 = nil
-local stoparm2 = false
-local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1tf","pat1synctfn","pat1synctfd","pat2tf","pat2synctfn","pat2synctfd","clock_tempo"}
 
--- forward declare functions
-local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,pattern1_stop_sync,pattern2_stop_sync,pattern1_record_start_sync,pattern2_record_start_sync,pattern1_record_stop_sync,pattern2_record_stop_sync,pattern1_start_sync,pattern2_start_sync,pattern1_reset_sync,pattern2_reset_sync,lighting_update_handler,grid_led_set,grid_led_add,clear_notes,get_digit,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome
+local patterns = {}
+
+local enc_control_options = {"shape","timbre","noise","cut","ampatk","amprel","pat1_tf","pat1_tf_sync_m","pat1_tf_sync_d","pat2_tf","pat2_tf_sync_m","pat2_tf_sync_d","clock_tempo"}
 
 tempo_change_handler = function(tempo)
   if bpm ~= tempo then
     bpm = tempo
-    if pattern1_sync == "clock" then
-      if pat1.rec == 1 then
-        pattern_record_stop(1)
-        pattern_clear(1)
-      else
-        params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-      end
-    end
 
-    if pattern2_sync == "clock" then
-      if pat2.rec == 1 then
-        pattern_record_stop(2)
-        pattern_clear(2)
-      else
-        params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
+    for i,pattern in ipairs(patterns) do
+      if pattern.sync and pattern.rec == 1 then
+        pattern_record_stop(i)
+        pattern_clear(i)
       end
     end
   end
@@ -153,48 +127,38 @@ start_note = function(id, note, detune)
   engine.start(id, music.note_num_to_freq(note) + detune)
 end
 
-clear_notes = function(source)
-  source = source or "all"
+clear_all_notes = function()
+  for id,e in pairs(currently_playing) do
+    currently_playing[id] = nil
+    e.state = 0
+    matrix_note(e)
+  end
 
-  if source == "all" then
-    for id,e in pairs(currently_playing) do
-      currently_playing[id] = nil
-      e.state = 0
-      matrix_note(e)
+  for id in pairs(pressed_notes) do
+    pressed_notes[id] = nil
+  end
+
+  if holding then
+    for id in pairs(held_notes) do
+      held_notes[id] = nil
     end
+    lighting_over_time.fixed[129] = nil
+    holding = false
+  end
+end
 
-    for id in pairs(pressed_notes) do
-      pressed_notes[id] = nil
-    end
-
-    if holding then
-      for id in pairs(held_notes) do
-        held_notes[id] = nil
-      end
-      lighting_over_time.fixed[129] = nil
-      holding = false
+clear_pattern_notes = function(pattern_t)
+  local notes_to_clear = {}
+  for id,e in pairs(currently_playing) do
+    if get_digit(id, 2) == sources[pattern_t.source_id] then
+      notes_to_clear[id] = e
     end
   end
 
-  if source == "pattern1" then
-    for id, e in pairs(currently_playing) do
-      if get_digit(id, 2) == sources.pattern1 then
-        e.state = 0
-        matrix_note(e)
-        e.state = 1
-      end
-    end
-  end
-
-  if source == "pattern2" then
-    for id, e in pairs(currently_playing) do
-      if get_digit(id, 2) == sources.pattern2 then
-        currently_playing[id] = nil
-        e.state = 0
-        matrix_note(e)
-        e.state = 1
-      end
-    end
+  for id,e in pairs(notes_to_clear) do
+    currently_playing[e.id] = nil
+    engine.stop(e.id)
+    nvoices = nvoices - 1
   end
 end
 
@@ -225,9 +189,7 @@ matrix_note = function(e)
 
             -- if note already being played is from same source, change id to not conflict
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
+              e.id = get_nonconflicting_id(e.id)
             end
           elseif params:string("same_note_behavior") == "retrigger" then
             -- stop engine from playing any instance of same note, but leave note in currently_playing
@@ -244,10 +206,8 @@ matrix_note = function(e)
             end
           elseif params:string("same_note_behavior") == "separate" then
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
+              e.id = get_nonconflicting_id(e.id)
+            end
           end
         end
       end
@@ -278,6 +238,7 @@ matrix_note = function(e)
       end
 
       --since no instances of same note are playing, stop any possible instance of the note
+      -- TODO: get rid of this
       for i=0,99 do
         engine.stop(note_hash*100+i)
       end
@@ -291,7 +252,7 @@ end
 --- CLOCKWORKS
 metronome = function()
   while true do
-    clock.sync(divnum / divdenom)
+    clock.sync(metronome_mult / metronome_div)
 
     softcut.position(1,0)
   end
@@ -299,18 +260,6 @@ end
 
 --- PATTERNS
 pattern_note = function(e)
-  if e.starter == true then
-    return
-  elseif e.syncer then
-    if e.n == 1 and stoparm1 ~= true then
-      reset_clock_id1 = clock.run(pattern1_reset_sync)
-    elseif e.n == 2 and stoparm2 ~= true then
-      reset_clock_id2 = clock.run(pattern2_reset_sync)
-    end
-
-    return
-  end
-
   local note_num = matrix_coord_to_note_num(e.x, e.y)
   if e.state > 0 then
     if nvoices < max_voices then
@@ -324,13 +273,13 @@ pattern_note = function(e)
           if params:string("same_note_behavior") == "ignore" then
             return
           elseif params:string("same_note_behavior") == "detuned" then
-            detune = math.random(-1, 1) * 3
+            detune = (math.random() + 1) * (math.random(0, 1) * 2 - 1)
 
             -- if note already being played is from same source, change id to not conflict
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
+              -- print("before: "..e.id)
+              e.id = get_nonconflicting_id(e.id)
+              -- print("after: "..e.id)
             end
           elseif params:string("same_note_behavior") == "retrigger" then
             -- stop engine from playing any instance of same note, but leave note in currently_playing
@@ -347,10 +296,8 @@ pattern_note = function(e)
             end
           elseif params:string("same_note_behavior") == "separate" then
             if currently_playing[e.id] ~= nil then
-              while currently_playing[e.id] ~= nil do
-                e.id = e.id + 1
-              end
-            end 
+              e.id = get_nonconflicting_id(e.id)
+            end
           end
         end
       end
@@ -387,227 +334,6 @@ pattern_note = function(e)
   end
 end
 
-pattern_stop = function(n)
-  pattern = patterns[n].pattern
-  pattern:stop()
-  clear_notes("pattern" .. n)
-
-  if n == 1 then
-    x = 1
-    y = 3
-  elseif n == 2 then
-    x = 1
-    y = 4
-  end
-
-  if pattern.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-end
-
-pattern1_stop_sync = function(n)
-  stoparm1 = true
-
-  if reset_clock_id1 ~= nil then
-    clock.cancel(reset_clock_id1)
-  end
-
-  clock.sync(1)
-
-  stoparm1 = false
-
-  pat1:stop()
-  clear_notes(pattern1)
-
-  x = 1
-  y = 3
-
-  if pat1.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-end
-
-pattern2_stop_sync = function(n)
-  stoparm2 = true
-
-  if reset_clock_id2 ~= nil then
-    clock.cancel(reset_clock_id2)
-  end
-
-  clock.sync(1)
-
-  stoparm2 = false
-
-  pat2:stop()
-  clear_notes(pattern2)
-
-  x = 1
-  y = 4
-
-  if pat2.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-end
-
-pattern_record_start = function (n)
-  pattern = patterns[n].pattern
-
-  if n == 1 then
-    pattern1_sync = false
-  elseif n == 2 then
-    pattern2_sync = false
-  else
-    print("huh?")
-  end
-
-  --patterns[n].sync = false
-  pattern_stop(n)
-  pattern:clear()
-  pattern:rec_start()
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 1
-    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
-
-    pattern:watch(p)
-  end
-
-  if n == 1 then
-    x = 1
-    y = 3
-    level = pattern_1_led_level
-  elseif n == 2 then
-    x = 1
-    y = 4
-    level = pattern_2_led_level + 2
-  end
-
-  create_fixed_pulse(x,y,0,level,.9,"fall")
-end
-
-pattern1_record_start_sync = function()
-  pattern1_sync = "clock"
-  pattern_stop(n)
-  pat1:clear()
-
-  x = 1
-  y = 3
-  level = pattern_1_led_level
-
-  create_fixed_pulse(x,y,0,level,.3,"wave")
-
-  clock.sync(1)
-
-  clear_fixed_pulse(x,y)
-  pattern1_basebpm = bpm
-
-  pat1:rec_start()
-
-  s = {}
-  s.starter = true
-  pat1:watch(s) 
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 1
-    p.id = math.floor(e.id / 100) * 100 + sources.pattern1 * 10
-
-    pat1:watch(p)
-  end
-
-  create_fixed_pulse(x,y,0,level,.9,"fall")
-end
-
-pattern2_record_start_sync = function()
-  pattern2_sync = "clock"
-  pattern_stop(n)
-  pat2:clear()
-
-  x = 1
-  y = 4
-  level = pattern_2_led_level + 2
-
-  create_fixed_pulse(x,y,0,level,.3,"wave")
-
-  clock.sync(1)
-
-  clear_fixed_pulse(x,y)
-  pattern2_basebpm = bpm
-
-  pat2:rec_start()
-
-  s = {}
-  s.starter = true
-  pat2:watch(s) 
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 1
-    p.id = math.floor(e.id / 100) * 100 + sources.pattern2 * 10
-
-    pat2:watch(p)
-  end
-
-  create_fixed_pulse(x,y,0,level,.9,"fall")
-end
-
-pattern_record_stop = function(n)
-  pattern = patterns[n].pattern
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 0
-    p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
-
-    pattern:watch(p)
-  end
-
-  pattern:rec_stop()
-
-  if n == 1 then
-    pattern1_timefactor = 1
-  elseif n == 2 then
-    pattern2_timefactor = 1
-  end
-
-  if n == 1 then
-    x = 1
-    y = 3
-  elseif n == 2 then
-    x = 1
-    y = 4
-  end
-
-  if pattern.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
-  end
-
-  clear_fixed_pulse(x,y)
-end
-
 pattern_start = function(n)
   pattern = patterns[n].pattern
 
@@ -615,159 +341,140 @@ pattern_start = function(n)
     return
   end
 
-  pattern:start()
+  pattern.callbacks.start = function()
+    local x,y,level
+    if n == 1 then
+      x = 1
+      y = 3
+      level = patterns[n].led_level
+    elseif n == 2 then
+      x = 1
+      y = 4
+      -- TODO: investigate this
+      level = patterns[n].led_level + 2
+    end
 
+    grid_led[x][y].add = nil
+
+    create_fixed_pulse(x,y,0,level,.9,"rise")
+  end
+
+  pattern:start()
+end
+
+pattern_stop = function(n)
+  pattern = patterns[n].pattern
+
+  pattern.callbacks.stop = function()
+    clear_pattern_notes(patterns[n])
+
+    local x,y
+    if n == 1 then
+      x = 1
+      y = 3
+    elseif n == 2 then
+      x = 1
+      y = 4
+    end
+
+    if pattern.count == 0 then
+      grid_led[x][y].add = nil
+    else
+      grid_led[x][y].add = 2
+    end
+
+    clear_fixed_pulse(x,y)
+  end
+
+  pattern:stop()
+end
+
+pattern_record_start = function (n)
+  pattern = patterns[n].pattern
+
+  local x,y
   if n == 1 then
     x = 1
     y = 3
-    level = pattern_1_led_level
   elseif n == 2 then
     x = 1
     y = 4
-    level = pattern_2_led_level + 2
   end
+  local level = patterns[n].led_level
 
-  grid_led[x][y].add = nil
 
-  create_fixed_pulse(x,y,0,level,.9,"rise")
-end
+  -- immediately stop pattern
+  if pattern.sync then
+    pattern.sync = false
+    pattern_stop(n)
+    pattern.sync = true
 
-pattern1_record_stop_sync = function(n)
-  s = {}
-  s.syncer = true
-  s.n = 1
-  pat1:watch(s)
-
-  clock.sync(1)
-
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 0
-    p.id = math.floor(e.id / 100) * 100 + sources.pattern1 * 10
-
-    pat1:watch(p)
-  end
-
-  pat1:rec_stop()
-
-  pattern1_timefactor = 1
-  pattern1_synctf_num = 1
-  pattern1_synctf_denom = 1
-
-  x = 1
-  y = 3
-
-  if pat1.count == 0 then
-    grid_led[x][y].add = nil
+    create_fixed_pulse(x,y,0,level,.3,"wave")
   else
-    grid_led[x][y].add = 2
+    pattern_stop(n)
   end
 
-  clear_fixed_pulse(x,y)
+  pattern:clear()
 
-  if pat1.count == 2 then
-    pattern_clear(n)
-    return
+  pattern.callbacks.rec_start = function()
+    for id, e in pairs(pressed_notes) do
+      p = {}
+      p.x = e.x
+      p.y = e.y
+      p.state = 1
+      p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
+
+      pattern:watch(p)
+    end
+
+    clear_fixed_pulse(x,y)
+    create_fixed_pulse(x,y,0,level,.9,"fall")
   end
 
-  pattern_start(1)
+  pattern:rec_start()
 end
 
-pattern2_record_stop_sync = function(n)
-  s = {}
-  s.syncer = true
-  s.n = 2
-  pat2:watch(s)
+pattern_record_stop = function(n)
+  pattern = patterns[n].pattern
 
-  clock.sync(1)
+  pattern.callbacks.rec_stop_pre = function()
+    for id, e in pairs(pressed_notes) do
+      p = {}
+      p.x = e.x
+      p.y = e.y
+      p.state = 0
+      p.id = math.floor(e.id / 100) * 100 + sources["pattern" .. n] * 10
 
-  for id, e in pairs(pressed_notes) do
-    p = {}
-    p.x = e.x
-    p.y = e.y
-    p.state = 0
-    p.id = math.floor(e.id / 100) * 100 + sources.pattern2 * 10
-
-    pat2:watch(p)
+      pattern:watch(p)
+    end
   end
 
-  pat2:rec_stop()
+  pattern.callbacks.rec_stop_post = function()
+    local x,y
+    if n == 1 then
+      x = 1
+      y = 3
+    elseif n == 2 then
+      x = 1
+      y = 4
+    end
 
-  pattern2_timefactor = 1
-  pattern2_synctf_num = 1
-  pattern2_synctf_denom = 1
+    if pattern.count == 0 then
+      grid_led[x][y].add = nil
+    else
+      grid_led[x][y].add = 2
+    end
 
-  x = 1
-  y = 4
-
-  if pat2.count == 0 then
-    grid_led[x][y].add = nil
-  else
-    grid_led[x][y].add = 2
+    clear_fixed_pulse(x,y)
+    pattern_start(n)
   end
 
-  clear_fixed_pulse(x,y)
-
-  if pat2.count == 2 then
-    pattern_clear(n)
-    return
-  end
-
-  pattern_start(2)
-end
-
-pattern1_start_sync = function(n)
-  if pat1.count == 0 then
-    return
-  end
-
-  clock.sync(1)
-
-  pattern_start(1)
-end
-
-pattern2_start_sync = function(n)
-  if pat2.count == 0 then
-    return
-  end
-
-  clock.sync(1)
-
-  pattern_start(2)
-end
-
-pattern1_reset_sync = function()
-  if pat1.count == 0 then
-    return
-  end
-
-  clock.sync(params:get("pat1synctfn") / params:get("pat1synctfd"))
-
-  pattern_stop(1)
-
-  reset_clock_id1 = nil
-
-  pattern_start(1)
-end
-
-pattern2_reset_sync = function()
-  if pat2.count == 0 then
-    return
-  end
-
-  clock.sync(params:get("pat2synctfn") / params:get("pat2synctfd"))
-
-  pattern_stop(2)
-
-  reset_clock_id2 = nil
-
-  pattern_start(2)
+  pattern:rec_stop()
 end
 
 pattern_clear = function(n)
   pattern = patterns[n].pattern
+  pattern.sync = false
 
   if pattern.play == 1 then
     pattern_stop(n)
@@ -775,14 +482,13 @@ pattern_clear = function(n)
 
   pattern:clear()
 
+  local x,y
   if n == 1 then
     x = 1
     y = 3
-    pattern1_sync = false
   elseif n == 2 then
     x = 1
     y = 4
-    pattern2_sync = false
   end
 
   grid_led[x][y].add = nil
@@ -812,9 +518,9 @@ lighting_update_handler = function()
     if note_info.source == "1" then
       grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, 1)
     elseif note_info.source == "2" then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_1_led_level)
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, patterns[1].led_level)
     elseif note_info.source == "3" then
-      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, pattern_2_led_level)
+      grid_led_add(e.x - grid_window.x + 2, grid_window.y - e.y + 1, patterns[2].led_level)
     end
 
     if e.pulser ~= nil then
@@ -1000,7 +706,7 @@ function redraw()
     screen.level(15)
   end
   screen.move(50,5)
-  screen.text("div: " .. divnum .. "/" .. divdenom)
+  screen.text("div: " .. metronome_mult .. "/" .. metronome_div)
 
   if enc_control == 0 then
     screen.level(15)
@@ -1032,17 +738,19 @@ function redraw()
     screen.level(4)
   end
   screen.move(64,16)
-  if pattern1_sync == false then
-    screen.text("p1 tf: " .. params:get("pat1tf"))
-  elseif pattern1_sync == "clock" then
-    screen.text("p1 tf: " .. params:get("pat1synctfn") .. " / " .. params:get("pat1synctfd"))
+  local pattern = patterns[1].pattern
+  if pattern.sync == false then
+    screen.text("p1 tf: " .. pattern.time_factor)
+  else
+    screen.text("p1 tf: " .. pattern.time_factor_sync_mult .. " / " .. pattern.time_factor_sync_div)
   end
 
   screen.move(64,25)
-  if pattern2_sync == false then
-    screen.text("p2 tf: " .. params:get("pat2tf"))
-  elseif pattern2_sync == "clock" then
-    screen.text("p2 tf: " .. params:get("pat2synctfn") .. " / " .. params:get("pat2synctfd"))
+  pattern = patterns[2].pattern
+  if pattern.sync == false then
+    screen.text("p2 tf: " .. pattern.time_factor)
+  else
+    screen.text("p2 tf: " .. pattern.time_factor_sync_mult .. " / " .. pattern.time_factor_sync_div)
   end
 
   current_beat_offset = clock.get_beats() % 1
@@ -1065,6 +773,24 @@ note_id_to_info = function(id)
   y = math.floor(note_hash/40)
   x = note_hash - y*40
   return {x = x, y = y, source = id:sub(-2,-2), note_hash = note_hash}
+end
+
+get_nonconflicting_id = function(id)
+  local ceil = (math.ceil(id/10) + 1) * 10
+  local new_id = id
+  while currently_playing[new_id] ~= nil do
+    new_id = id + 1
+
+    if id == ceil then
+      id = ceil - 10
+    end
+
+    if new_id == id then
+      error("Unable to obtain nonconflicting id for id "..id)
+    end
+  end
+
+  return new_id
 end
 
 get_digit = function(num, digit)
@@ -1116,16 +842,9 @@ function g.key(x, y, z)
           end
         end
       elseif y == 3 or y == 4 then
-        n = y - 2
-        pattern = patterns[n].pattern
-
-        if n == 1 then
-          sync = pattern1_sync
-        elseif n == 2 then
-          sync = pattern2_sync
-        else
-          print("huh?")
-        end
+        local n = y - 2
+        local pattern = patterns[n].pattern
+        local sync = pattern.sync
 
         if ctrlkey then
           pattern_stop(n)
@@ -1134,46 +853,15 @@ function g.key(x, y, z)
         elseif altkey then
           pattern_stop(n)
           pattern_clear(n)
-          if n == 1 then
-            clock.run(pattern1_record_start_sync)
-          elseif n == 2 then
-            clock.run(pattern2_record_start_sync)
-          else
-            print("huh?")
-          end
+          pattern.sync = true
+          pattern_record_start(n)
         elseif pattern.rec == 0 and pattern.count == 0 then
           pattern_record_start(n)
-        elseif pattern.rec == 1 and sync == "clock" then
-          if n == 1 then
-            clock.run(pattern1_record_stop_sync)
-          elseif n == 2 then
-            clock.run(pattern2_record_stop_sync)
-          else
-            print("huh?")
-          end
-        elseif pattern.rec == 1 and sync == false then
+        elseif pattern.rec == 1 then
           pattern_record_stop(n)
+        elseif pattern.play == 0 then
           pattern_start(n)
-        elseif pattern.play == 0 and sync == "clock" then
-          if n == 1 then
-            clock.run(pattern1_start_sync)
-          elseif n == 2 then
-            clock.run(pattern2_start_sync)
-          else
-            print("huh?")
-          end
-        elseif pattern.play == 0 and sync == false then
-          pattern_start(n)
-        elseif pattern.play == 1 and sync == "clock" then
-
-          if n == 1 then
-            clock.run(pattern1_stop_sync)
-          elseif n == 2 then
-            clock.run(pattern2_stop_sync)
-          else
-            print("huh?")
-          end
-        elseif pattern.play == 1 and sync == false then
+        elseif pattern.play == 1 then
           pattern_stop(n)
         end
       elseif y == 1 then
@@ -1206,20 +894,20 @@ function g.key(x, y, z)
     p.y = grid_window.y - y + 1
     p.state = z
     p.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern1 * 10 -- 2nd to last digit of ID specifies source
-    pat1:watch(p)
+    patterns[1].pattern:watch(p)
 
     p2 = {}
     p2.x = grid_window.x + x - 2
     p2.y = grid_window.y - y + 1
     p2.state = z
-    p2.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern2 * 10 
-    pat2:watch(p2)
+    p2.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pattern2 * 10
+    patterns[2].pattern:watch(p2)
 
     e = {}
     e.x = grid_window.x + x - 2
     e.y = grid_window.y - y + 1
     e.state = z
-    e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10 
+    e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10
 
     if z == 1 then
       if ctrlkey and grid_presses[1][8] == 1 then
@@ -1264,28 +952,10 @@ function enc(n,delta)
     if n == 1 then
       bpm = util.clamp(bpm + delta, 1, 300)
       params:set("clock_tempo", bpm)
-
-      if pattern1_sync == "clock" then
-        if pat1.rec == 1 then
-          pattern_record_stop(1)
-          pattern_clear(1)
-        else
-          params:set("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / params:get("pat1synctfd")))
-        end
-      end
-
-      if pattern2_sync == "clock" then
-        if pat2.rec == 1 then
-          pattern_record_stop(2)
-          pattern_clear(2)
-        else
-          params:set("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / params:get("pat2synctfd")))
-        end
-      end
     elseif n == 2 then
-      divnum = util.clamp(divnum + delta, 1, 1000000)
+      metronome_mult = util.clamp(metronome_mult + delta, 1, 1000000)
     elseif n == 3 then
-      divdenom = util.clamp(divdenom + delta, 1, 1000000)
+      metronome_div = util.clamp(metronome_div + delta, 1, 1000000)
     end
   elseif k1 then
     if n == 1 then
@@ -1340,23 +1010,23 @@ function key(n,z)
       params:set("enc2",1)
       params:set("enc3",2)
     elseif enc_control == 2 then
-      if pattern1_sync == false then
+      if not patterns[1].pattern.sync then
         params:set("enc2",7)
-      elseif pattern1_sync == "clock" then
+      else
         params:set("enc2",9)
         params:set("enc1",8)
       end
 
-      if pattern2_sync == false then
+      if not patterns[2].pattern.sync then
         params:set("enc3",10)
-      elseif pattern2_sync == "clock" then
+      else
         params:set("enc3",12)
-        if pattern1_sync ~= "clock" then
+        if not patterns[1].pattern.sync then
           params:set("enc1",11)
         end
       end
 
-      if pattern1_sync == false and pattern1_sync == false then
+      if not patterns[1].pattern.sync and patterns[2].pattern.sync then
         params:set("enc1",13)
       end
     end
@@ -1370,17 +1040,21 @@ end
 
 --- INIT
 function init()
-  pat1 = pattern_time.new()
-  pat1.process = pattern_note
-  patterns[1] = {}
-  patterns[1].pattern = pat1
-  patterns[1].sync = false
+  for i=1,2 do
+    local p = {}
 
-  pat2 = pattern_time.new()
-  pat2.process = pattern_note
-  patterns[2] = {}
-  patterns[2].pattern = pat2
-  patterns[2].sync = false
+    p.pattern = eloop.new()
+    p.pattern.process = pattern_note
+    p.source_id = "pattern"..i
+
+    patterns[i] = p
+
+    p.pattern.callbacks.loop = function()
+      clear_pattern_notes(patterns[i])
+    end
+  end
+  patterns[1].led_level = 8
+  patterns[2].led_level = 3
 
   params:add_separator("top_sep", "control")
   params:add_option("enc1","enc1", enc_control_options, 4)
@@ -1401,65 +1075,65 @@ function init()
     quantum = 0.005,
     wrap = false
   }
-  params:add_control("pat1tf","pattern1 timef",tf_control)
-  params:add_control("pat2tf","pattern2 timef",tf_control)
-  params:add_number("pat1synctfn","pattern 1 sync numer",1,64,1)
-  params:add_number("pat1synctfd","pattern 1 sync denom",1,64,1)
-  params:add_number("pat2synctfn","pattern 2 sync numer",1,64,1)
-  params:add_number("pat2synctfd","pattern 2 sync denom",1,64,1)
+  params:add_control("pat1_tf","pattern1 timef",tf_control)
+  params:add_control("pat2_tf","pattern2 timef",tf_control)
+  local mult_div_spec = controlspec.def{
+      min = 1,
+      max = 64,
+      warp = 'lin',
+      step = 1, -- value quantization
+      default = 1,
+      -- units = 'v',
+      quantum = 1/63,
+      wrap = false
+  }
+  params:add({
+    id = "pat1_tf_sync_m",
+    name = "pattern 1 sync mult",
+    type = "control",
+    controlspec = mult_div_spec
+  })
+  params:add({
+    id = "pat1_tf_sync_d",
+    name = "pattern 1 sync div",
+    type = "control",
+    controlspec = mult_div_spec
+  })
+  params:add({
+    id = "pat2_tf_sync_m",
+    name = "pattern 2 sync mult",
+    type = "control",
+    controlspec = mult_div_spec
+  })
+  params:add({
+    id = "pat2_tf_sync_d",
+    name = "pattern 2 sync div",
+    type = "control",
+    controlspec = mult_div_spec
+  })
 
-  params:set_action("pat1tf", function(tf)
-    if not pattern1_sync then
-      pat1:set_time_factor(tf)
-    end
+  params:set_action("pat1_tf", function(tf)
+    patterns[1].pattern:set_time_factor(tf)
   end)
 
-  params:set_action("pat2tf", function(tf)
-    if not pattern2_sync then
-      pat2:set_time_factor(tf)
-    end
+  params:set_action("pat2_tf", function(tf)
+    patterns[2].pattern:set_time_factor(tf)
   end)
 
-  params:set_action("pat1synctfn", function(n)
-    if pattern1_sync == "clock" then
-      pat1:set_time_factor("pat1tf",(pattern1_basebpm / bpm) * (n / params:get("pat1synctfd")))
-      if reset_clock_id1 ~= nil then
-        clock.cancel(reset_clock_id1)
-        --reset_clock_id1 = clock.run(pattern1_reset_sync)
-        reset_clock_id1 = nil
-      end
-    end
+  params:set_action("pat1_tf_sync_m", function(i)
+    patterns[1].pattern:set_time_factor_sync_mult(i)
   end)
 
-  params:set_action("pat1synctfd", function(d)
-    if pattern1_sync == "clock" then
-      pat1:set_time_factor("pat1tf",(pattern1_basebpm / bpm) * (params:get("pat1synctfn") / d))
-      if reset_clock_id1 ~= nil then
-        clock.cancel(reset_clock_id1)
-        --reset_clock_id1 = clock.run(pattern1_reset_sync)
-        reset_clock_id1 = nil
-      end
-    end
+  params:set_action("pat1_tf_sync_d", function(i)
+    patterns[1].pattern:set_time_factor_sync_div(i)
   end)
 
-  params:set_action("pat2synctfn", function(n)
-    if pattern2_sync == "clock" then
-      pat2:set_time_factor("pat2tf",(pattern2_basebpm / bpm) * (n / params:get("pat2synctfd")))
-      if reset_clock_id2 ~= nil then
-        clock.cancel(reset_clock_id2)
-        reset_clock_id2 = clock.run(pattern2_reset_sync)
-      end
-    end
+  params:set_action("pat2_tf_sync_m", function(i)
+    patterns[2].pattern:set_time_factor_sync_mult(i)
   end)
 
-  params:set_action("pat2synctfd", function(d)
-    if pattern2_sync == "clock" then
-      pat2:set_time_factor("pat2tf",(pattern2_basebpm / bpm) * (params:get("pat2synctfn") / d))
-      if reset_clock_id2 ~= nil then
-        clock.cancel(reset_clock_id2)
-        reset_clock_id2 = clock.run(pattern2_reset_sync)
-      end
-    end
+  params:set_action("pat2_tf_sync_d", function(i)
+    patterns[2].pattern:set_time_factor_sync_div(i)
   end)
 
   local clock_tempo = params:lookup_param("clock_tempo")
@@ -1512,9 +1186,4 @@ end
 
 function reload()
   norns.script.load(norns.state.script)
-end
-
-function cleanup()
-  pat:stop()
-  pat = nil
 end
