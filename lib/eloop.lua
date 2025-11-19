@@ -1,6 +1,6 @@
 --- timed event looper with clock sync capabilities
 --
--- An extension of builtin
+-- An extension of the builtin
 -- [pattern_time lib](https://monome.org/docs/norns/reference/lib/pattern_time)
 
 local eloop = {}
@@ -24,6 +24,7 @@ function eloop.new()
   i.sync_offset = 0
   i.sync_div = 1 -- beat on which to start/stop recording
   i.resync = false -- means when reaching end of loop, need to remake clock syncer
+  i.sync_stop = false -- if true, calling stop() on a clock-synced pattern will let it run out before stopping. if false, stops immediately
   -- don't set directly, use set_time_factor_sync methods
   i.time_factor_sync_mult = 1
   i.time_factor_sync_div = 1
@@ -257,8 +258,17 @@ function eloop:stop()
       self.clocks.syncer = nil
     end
   elseif self.clocks.syncer then
-    -- if syncing, wait for the stop to finish naturally
-    self.clocks.syncer = nil
+    if self.sync_stop then
+      -- wait for the stop to finish naturally
+      self.clocks.syncer = nil
+    else
+      clock.cancel(self.clocks.syncer)
+      self.clocks.syncer = nil
+      self.play = 0
+      self.overdub = 0
+      self.metro:stop()
+      self.callbacks.stop()
+    end
   end
 end
 
