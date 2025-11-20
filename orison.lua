@@ -1,6 +1,7 @@
 inspect= require 'tools.inspect'
 local music = require 'musicutil'
 local eloop = include 'lib/eloop'
+local keyhelper = include 'lib/keyhelper'
 
 local polysub = require 'polysub'
 
@@ -8,6 +9,7 @@ local g = grid.connect()
 local grid_connected = g.device~= nil and true or false
 local cols = grid_connected and g.device.cols or 16
 local rows = grid_connected and g.device.rows or 8
+local gkey = keyhelper.new(cols, rows)
 
 -- forward declare functions
 local pattern_record_start,pattern_record_stop,pattern_clear,grid_led_array_init,grid_press_array_init,grid_led_clear,note_hasher,tempo_change_handler,create_fixed_pulse,clear_fixed_pulse,start_holding,create_mod_pulse,add_to_held,stop_holding,remove_from_held,pattern_stop,pattern_start,note_id_to_info,start_note,matrix_coord_to_note_num,lighting_update_handler,grid_led_set,grid_led_add,grid_to_note_num,table_size,matrix_note,pattern_note,gridredraw,metronome,clear_pattern_notes,get_digit
@@ -53,7 +55,6 @@ local metrolevel = 6
 local metronome_mult = 1
 local metronome_div = 1
 local k1 = false
-local ctrlkey = false
 local metronome_sound = _path.code.."orison/metronome-tick.wav"
 local retriggertracker = 0
 
@@ -801,11 +802,9 @@ end
 
 table_size = function(table)
   count = 0
-  for key, val in pairs(table) do 
-    print("key: " .. key .. " val: " .. val.id)
-    count = count + 1 
+  for k,v in pairs(table) do
+    count = count + 1
   end
-  print("number of elements: " .. count)
   return count
 end
 
@@ -823,71 +822,109 @@ grid_press_array_init = function()
   return init_grid
 end
 
+gkey[1][1].press = function()
+  grid_window.y = grid_window.y + 1
+
+  for id, e in pairs(pressed_notes) do
+    e.y_transpose_since_press = e.y_transpose_since_press + 1
+  end
+end
+
+gkey[1][2].press = function()
+  grid_window.y = grid_window.y - 1
+
+  for id, e in pairs(pressed_notes) do
+    e.y_transpose_since_press = e.y_transpose_since_press - 1
+  end
+end
+
+local function pattern_key_press(n)
+  local pattern = patterns[n].pattern
+  local sync = pattern.sync
+
+  if ctrl.pressed then
+    pattern_stop(n)
+    pattern_clear(n)
+    pattern_record_start(n)
+  elseif shift.pressed then
+    pattern_stop(n)
+    pattern_clear(n)
+    pattern.sync = true
+    pattern_record_start(n)
+  elseif pattern.rec == 0 and pattern.count == 0 then
+    pattern_record_start(n)
+  elseif pattern.rec == 1 then
+    pattern_record_stop(n)
+  elseif pattern.play == 0 then
+    pattern_start(n)
+  elseif pattern.play == 1 then
+    pattern_stop(n)
+  end
+end
+
+gkey[1][3].press = function()
+  pattern_key_press(1)
+end
+
+gkey[1][4].press = function()
+  pattern_key_press(2)
+end
+
+shift = gkey[1][6]
+ctrl = gkey[1][7]
+
+holdkey = gkey[1][8]
+
+holdkey.press = function()
+  if not holding and not ctrl.pressed then
+    holdkey:short_press_cancel()
+
+    for id, e in pairs(pressed_notes) do
+      add_to_held(e)
+    end
+  elseif ctrl.pressed then
+    holdkey:short_press_cancel()
+
+    for id, e in pairs(pressed_notes) do
+      if held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
+        add_to_held(e)
+      else
+        remove_from_held(math.floor(id / 100) * 100 + 10 * sources.pressed)
+      end
+    end
+  end
+end
+
+holdkey.short_press = function()
+  if holding then
+    stop_holding()
+  end
+end
+
 function g.key(x, y, z)
   grid_presses[x][y] = z
   if x == 1 then
-    if z == 1 then
-      if y == 8 and not holding and not ctrlkey then
-        for id, e in pairs(pressed_notes) do
-          add_to_held(e)
-        end
-      elseif y == 8 and holding and not ctrlkey then
-        stop_holding()
-      elseif y == 8 and ctrlkey then
-        for id, e in pairs(pressed_notes) do
-          if held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
-            add_to_held(e)
-          else
-            remove_from_held(math.floor(id / 100) * 100 + 10 * sources.pressed)
-          end
-        end
-      elseif y == 3 or y == 4 then
-        local n = y - 2
-        local pattern = patterns[n].pattern
-        local sync = pattern.sync
+    gkey:handle(z, x, y)
 
-        if ctrlkey then
-          pattern_stop(n)
-          pattern_clear(n)
-          pattern_record_start(n)
-        elseif altkey then
-          pattern_stop(n)
-          pattern_clear(n)
-          pattern.sync = true
-          pattern_record_start(n)
-        elseif pattern.rec == 0 and pattern.count == 0 then
-          pattern_record_start(n)
-        elseif pattern.rec == 1 then
-          pattern_record_stop(n)
-        elseif pattern.play == 0 then
-          pattern_start(n)
-        elseif pattern.play == 1 then
-          pattern_stop(n)
-        end
-      elseif y == 1 then
-        grid_window.y = grid_window.y + 1
+    -- if z == 1 then
+    --   if y == 8 and not holding and not ctrl.pressed then
+    --     print("adding pressed to held")
 
-        for id, e in pairs(pressed_notes) do
-          e.y_transpose_since_press = e.y_transpose_since_press + 1
-        end
-      elseif y == 2 then
-        grid_window.y = grid_window.y - 1
-
-        for id, e in pairs(pressed_notes) do
-          e.y_transpose_since_press = e.y_transpose_since_press - 1
-        end
-      elseif y == 6 then
-        altkey = true
-      elseif y == 7 then
-        ctrlkey = true
-      end
-    elseif z == 0 then
-      if y == 6 then
-        altkey = false
-      elseif y == 7 then
-        ctrlkey = false
-      end
-    end
+    --     for id, e in pairs(pressed_notes) do
+    --       add_to_held(e)
+    --     end
+    --   elseif y == 8 and holding and not ctrl.pressed then
+    --     stop_holding()
+    --   elseif y == 8 and ctrl.pressed then
+    --     for id, e in pairs(pressed_notes) do
+    --       if held_notes[math.floor(id / 100) * 100 + 10 * sources.pressed] == nil then
+    --         add_to_held(e)
+    --       else
+    --         remove_from_held(math.floor(id / 100) * 100 + 10 * sources.pressed)
+    --       end
+    --     end
+    --   end
+    -- end
   else
     p = {}
     p.x = grid_window.x + x - 2
@@ -910,7 +947,8 @@ function g.key(x, y, z)
     e.id = note_hasher(grid_window.x + x - 2, grid_window.y - y + 1) * 100 + sources.pressed * 10
 
     if z == 1 then
-      if ctrlkey and grid_presses[1][8] == 1 then
+      if holdkey.pressed then
+        holdkey:short_press_cancel()
         if held_notes[e.id] ~= nil then
           remove_from_held(e.id)
         else
